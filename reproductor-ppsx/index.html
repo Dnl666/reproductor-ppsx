@@ -1,0 +1,1654 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Reproductor PPSX</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lato:ital,wght@0,300;0,400;0,700;0,900;1,300;1,400;1,700;1,900&display=swap">
+<meta name="description" content="Reproductor de presentaciones .ppsx/.pptx: enlaces de OneDrive/SharePoint o archivos locales, con audio habilitado por defecto.">
+<style>
+/* ============================================================
+   Reproductor PPSX
+   - Enlaces OneDrive / SharePoint / URL pública → visor oficial de PowerPoint (conserva animaciones y audio)
+   - Archivo .ppsx / .pptx local o del mismo servidor → se dibuja en el navegador
+   Parámetros de URL: ver bloque "PARÁMETROS" en el script.
+   ============================================================ */
+:root{
+  --accent:#4C8DFF;
+  --accent-ink:#FFFFFF;
+  --stage:#0A0C10;
+  --bar:#12151B;
+  --bar-line:#242A35;
+  --bar-fg:#E8EBF1;
+  --bar-muted:#8B93A3;
+  --home-bg:#F4F5F7;
+  --home-card:#FFFFFF;
+  --home-fg:#151922;
+  --home-muted:#5A6373;
+  --home-line:#E1E5EB;
+  --field:#F8F9FB;
+  --danger:#E5484D;
+  --radius:14px;
+  --ui-font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --home-bg:#0D1015; --home-card:#161A22; --home-fg:#E8EBF1; --home-muted:#99A2B1;
+    --home-line:#262C37; --field:#0F1319; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"]{
+  --home-bg:#0D1015; --home-card:#161A22; --home-fg:#E8EBF1; --home-muted:#99A2B1;
+  --home-line:#262C37; --field:#0F1319; color-scheme: dark;
+}
+
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--home-bg);color:var(--home-fg);font:15px/1.5 var(--ui-font);-webkit-font-smoothing:antialiased}
+body[data-view="player"]{background:var(--stage);overflow:hidden}
+[hidden]{display:none!important}
+button{font:inherit;color:inherit}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+
+/* ---------------- Aviso sin JavaScript (p. ej. vista previa de una app) ---------------- */
+#nojs{min-height:100%;display:grid;place-items:center;padding:32px 16px;text-align:center}
+#nojs .card{max-width:520px}
+#nojs h1{font-size:18px;margin:0 0 8px}
+#nojs p{margin:0 0 16px;color:var(--home-muted);font-size:14.5px}
+#nojs a.btn{text-decoration:none}
+
+/* ---------------- Inicio ---------------- */
+#home{min-height:100%;display:flex;justify-content:center;padding:40px 16px 56px}
+.wrap{width:100%;max-width:640px}
+.brand{display:flex;align-items:center;gap:12px;margin-bottom:24px}
+.brand-mark{width:40px;height:40px;border-radius:11px;background:var(--accent);color:var(--accent-ink);display:grid;place-items:center;flex:none}
+.brand h1{font-size:20px;line-height:1.2;margin:0;font-weight:650;letter-spacing:-.01em}
+.brand p{margin:2px 0 0;color:var(--home-muted);font-size:13.5px}
+.card{background:var(--home-card);border:1px solid var(--home-line);border-radius:var(--radius);padding:20px}
+.card + .card{margin-top:16px}
+.label{display:block;font-size:13px;font-weight:600;margin:0 0 8px}
+.row{display:flex;gap:8px}
+.field{flex:1;min-width:0;background:var(--field);border:1px solid var(--home-line);border-radius:10px;padding:11px 12px;font:14px/1.4 var(--ui-font);color:var(--home-fg);outline:none;resize:vertical}
+.field:focus{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 22%,transparent)}
+.btn{appearance:none;border:0;border-radius:10px;padding:0 18px;min-height:44px;background:var(--accent);color:var(--accent-ink);font-weight:600;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:8px;white-space:nowrap}
+.btn:hover{filter:brightness(1.07)}
+.btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.btn.ghost{background:transparent;color:var(--home-fg);border:1px solid var(--home-line)}
+.btn.small{min-height:34px;padding:0 12px;font-size:13px}
+.hint{margin:10px 0 0;color:var(--home-muted);font-size:13px}
+.msg{margin:10px 0 0;font-size:13px;color:var(--danger)}
+.or{display:flex;align-items:center;gap:12px;color:var(--home-muted);font-size:12.5px;margin:18px 0}
+.or::before,.or::after{content:"";flex:1;height:1px;background:var(--home-line)}
+#drop{display:flex;flex-direction:column;align-items:center;gap:6px;text-align:center;padding:26px 16px;border:1.5px dashed var(--home-line);border-radius:12px;cursor:pointer;background:var(--field);transition:border-color .15s,background .15s}
+#drop:hover,#drop.over{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 7%,var(--field))}
+#drop strong{font-weight:600}
+#drop span{color:var(--home-muted);font-size:13px}
+details{margin-top:14px;border-top:1px solid var(--home-line);padding-top:12px}
+summary{cursor:pointer;font-size:13.5px;font-weight:600}
+details ol{margin:10px 0 0;padding-left:20px;color:var(--home-muted);font-size:13.5px}
+details li{margin:4px 0}
+code,kbd{font:12.5px/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.code{width:100%;min-height:92px;font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;resize:vertical}
+.embed-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px}
+.embed-head h2{font-size:15px;margin:0;font-weight:650}
+.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.params{margin:12px 0 0;padding:0;list-style:none;font-size:13px;color:var(--home-muted)}
+.params li{padding:3px 0}
+.params code{color:var(--home-fg)}
+
+/* ---------------- Reproductor ---------------- */
+#player{position:fixed;inset:0;background:var(--stage);display:grid;place-items:center;overflow:hidden;color:var(--bar-fg);font-family:var(--ui-font)}
+#box{position:relative;display:flex;flex-direction:column;background:#000;box-shadow:0 0 0 1px rgba(255,255,255,.04)}
+#screen{position:relative;flex:1;min-height:0;overflow:hidden;background:#000}
+#officeHost,#officeHost iframe{position:absolute;inset:0;width:100%;height:100%;border:0;display:block;background:#000}
+#slideHost{position:absolute;inset:0;overflow:hidden;touch-action:pan-y}
+#scaler{position:absolute;left:0;top:0;transform-origin:0 0}
+#scaler .pptx-preview-wrapper{overflow:hidden!important;background:#000!important}
+#hot{position:absolute;left:0;top:0;pointer-events:none}
+.hot{position:absolute;pointer-events:auto;background:transparent;border:0;padding:0;margin:0;cursor:pointer;border-radius:6px}
+.hot:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+#hot .vid{position:absolute;pointer-events:auto;background:#000;object-fit:contain}
+.hot.media.is-playing{box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 70%,transparent);animation:pulse 1.6s ease-in-out infinite}
+@keyframes pulse{50%{box-shadow:0 0 0 6px color-mix(in srgb,var(--accent) 25%,transparent)}}
+.pptx-preview-slide-wrapper.enter{animation:fadein .28s ease-out}
+@keyframes fadein{from{opacity:0}to{opacity:1}}
+
+/* Barra (modo navegador) */
+#bar{flex:none;height:48px;display:flex;align-items:center;gap:4px;padding:0 8px;background:var(--bar);border-top:1px solid var(--bar-line);user-select:none}
+.ib{appearance:none;border:0;background:transparent;color:var(--bar-fg);width:38px;height:38px;border-radius:9px;display:grid;place-items:center;cursor:pointer;flex:none}
+.ib:hover{background:rgba(255,255,255,.08)}
+.ib:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.ib:disabled{opacity:.35;cursor:default;background:transparent}
+.ib svg{width:20px;height:20px}
+#count{font-size:13px;color:var(--bar-muted);min-width:64px;text-align:center;font-variant-numeric:tabular-nums}
+#prog{flex:1;height:4px;border-radius:4px;background:var(--bar-line);margin:0 10px;overflow:hidden;min-width:24px}
+#progFill{height:100%;width:0;background:var(--accent);border-radius:4px;transition:width .25s}
+
+/* Controles flotantes (modo OneDrive) */
+#float{position:absolute;top:10px;right:10px;display:flex;gap:6px;z-index:6;opacity:0;transform:translateY(-4px);transition:opacity .2s,transform .2s;pointer-events:none}
+#player.show-ui #float,#float:focus-within{opacity:1;transform:none;pointer-events:auto}
+#float .ib{background:rgba(12,14,18,.72);backdrop-filter:blur(6px)}
+#float .ib:hover{background:rgba(12,14,18,.9)}
+
+/* Capas: inicio, carga, error, fin, audio */
+.layer{position:absolute;inset:0;z-index:8;display:grid;place-items:center;text-align:center;padding:16px}
+#gate{background:radial-gradient(ellipse at center,rgba(20,24,32,.55),rgba(5,6,9,.92));cursor:pointer}
+.gate-in{display:flex;flex-direction:column;align-items:center;gap:14px;max-width:90%}
+.play{width:84px;height:84px;border-radius:50%;background:var(--accent);color:var(--accent-ink);display:grid;place-items:center;border:0;cursor:pointer;box-shadow:0 10px 30px rgba(0,0,0,.45);transition:transform .15s}
+.play:hover{transform:scale(1.05)}
+.play:focus-visible{outline:3px solid #fff;outline-offset:4px}
+.play svg{width:34px;height:34px;margin-left:5px}
+#gateTitle{font-size:clamp(15px,2.4vw,22px);font-weight:650;margin:0;color:#fff;text-wrap:balance}
+.gate-sub{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:#C9CFDA;background:rgba(255,255,255,.08);padding:5px 11px;border-radius:999px}
+.gate-sub svg{width:15px;height:15px}
+#loading{background:rgba(5,6,9,.78);pointer-events:none}
+.spin{width:36px;height:36px;border-radius:50%;border:3px solid rgba(255,255,255,.15);border-top-color:var(--accent);animation:rot .8s linear infinite;margin:0 auto 12px}
+@keyframes rot{to{transform:rotate(360deg)}}
+#loadingText{font-size:13.5px;color:#C9CFDA}
+#error{background:rgba(5,6,9,.94)}
+#error .box{max-width:460px}
+#error h2{font-size:17px;margin:0 0 6px;color:#fff}
+#error p{margin:0 0 14px;color:#C9CFDA;font-size:14px}
+#end{background:#050608}
+#end h2{font-size:clamp(16px,2.6vw,24px);margin:0 0 14px;color:#fff;font-weight:650}
+#unlock{position:absolute;left:50%;bottom:16px;transform:translateX(-50%);z-index:7;display:inline-flex;align-items:center;gap:8px;border:0;border-radius:999px;padding:10px 16px;background:var(--accent);color:var(--accent-ink);font-weight:600;font-size:14px;cursor:pointer;box-shadow:0 8px 24px rgba(0,0,0,.4)}
+#unlock svg{width:18px;height:18px}
+
+@media (max-width:520px){
+  #home{padding-top:24px}
+  .row{flex-direction:column}
+  .btn{width:100%}
+  .actions .btn{width:auto}
+  #count{min-width:52px;font-size:12px}
+  #prog{margin:0 4px}
+}
+@media (prefers-reduced-motion:reduce){
+  *{animation-duration:.01ms!important;transition-duration:.01ms!important}
+}
+</style>
+</head>
+<body data-view="home">
+
+<!-- Se muestra solo si el navegador no ejecuta el script (por ejemplo, en una vista previa) -->
+<div id="nojs">
+  <div class="card">
+    <h1>Abre este archivo en Chrome o Edge</h1>
+    <p>La vista previa donde lo estás viendo no permite reproducir presentaciones. Descarga el archivo y ábrelo con doble clic en tu navegador.</p>
+  </div>
+</div>
+
+<!-- ===================== INICIO ===================== -->
+<section id="home" aria-labelledby="homeTitle" hidden>
+  <div class="wrap">
+    <header class="brand">
+      <div class="brand-mark" aria-hidden="true">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M10 8.5v5l4-2.5z" fill="currentColor"/><path d="M8 21h8M12 17v4"/></svg>
+      </div>
+      <div>
+        <h1 id="homeTitle">Reproductor PPSX</h1>
+        <p>Presentaciones de PowerPoint con audio, listas para tu web o LMS.</p>
+      </div>
+    </header>
+
+    <div class="card">
+      <form id="linkForm" autocomplete="off">
+        <label class="label" for="linkInput">Enlace de OneDrive, código de inserción o URL del archivo</label>
+        <div class="row">
+          <input class="field" id="linkInput" type="text" inputmode="url" spellcheck="false" placeholder="https://tu-sitio.com/presentacion.ppsx o enlace de OneDrive">
+          <button class="btn" type="submit">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4.5v15l13-7.5z"/></svg>
+            Reproducir
+          </button>
+        </div>
+        <p class="msg" id="linkMsg" hidden></p>
+      </form>
+
+      <div class="or">o</div>
+
+      <label id="drop" tabindex="0">
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V4M7.5 8.5 12 4l4.5 4.5"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg>
+        <strong>Arrastra aquí un .ppsx o .pptx</strong>
+        <span>o haz clic para elegirlo de tu computador</span>
+        <input id="fileInput" class="sr" type="file" accept=".ppsx,.pptx,.ppsm,.pptm,application/vnd.openxmlformats-officedocument.presentationml.slideshow,application/vnd.openxmlformats-officedocument.presentationml.presentation">
+      </label>
+
+      <details>
+        <summary>¿Cómo obtengo el enlace correcto de OneDrive?</summary>
+        <ol>
+          <li>Abre la presentación en OneDrive (PowerPoint para la web).</li>
+          <li>Ve a <strong>Archivo → Compartir → Insertar</strong> y pulsa <strong>Generar</strong>.</li>
+          <li>Copia el código o solo el enlace <code>src</code> y pégalo arriba. El enlace de “Copiar vínculo” normal no se deja insertar.</li>
+          <li>Un archivo .ppsx arrastrado aquí se dibuja en el navegador: conserva textos, imágenes, audio, botones y animaciones básicas (aparecer, desaparecer, desplazar).</li>
+        </ol>
+      </details>
+    </div>
+
+    <div class="card" id="embedCard" hidden>
+      <div class="embed-head">
+        <h2>Insertar en tu web o LMS</h2>
+      </div>
+      <label class="label" for="embedCode">Código para pegar (incluye permiso de audio y pantalla completa)</label>
+      <textarea class="field code" id="embedCode" readonly></textarea>
+      <div class="actions">
+        <button class="btn small" type="button" id="copyEmbed">Copiar código</button>
+        <button class="btn small ghost" type="button" id="copyLink">Copiar enlace directo</button>
+      </div>
+      <p class="hint" id="embedNote"></p>
+      <ul class="params">
+        <li><code>&amp;titulo=Mi%20curso</code> — texto en la pantalla de inicio</li>
+        <li><code>&amp;inicio=directo</code> — sin botón de inicio (el navegador puede silenciar el audio hasta el primer clic)</li>
+        <li><code>&amp;ui=1</code> — muestra el botón para cambiar de presentación</li>
+        <li><code>&amp;color=4C8DFF</code> — color de acento</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== REPRODUCTOR ===================== -->
+<main id="player" hidden aria-label="Presentación">
+  <div id="box">
+    <div id="screen">
+      <div id="officeHost"></div>
+      <div id="slideHost" hidden>
+        <div id="scaler"><div id="pvHost"></div><div id="hot"></div></div>
+      </div>
+
+      <div id="float">
+        <button class="ib" type="button" data-act="fullscreen" aria-label="Pantalla completa" title="Pantalla completa (F)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
+        </button>
+        <button class="ib" type="button" data-act="home" aria-label="Cambiar presentación" title="Cambiar presentación">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>
+        </button>
+      </div>
+
+      <button id="unlock" type="button" hidden>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/></svg>
+        Toca para activar el audio
+      </button>
+
+      <div class="layer" id="gate" hidden>
+        <div class="gate-in">
+          <button class="play" type="button" id="gateBtn" aria-label="Iniciar presentación">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 3.8v16.4L20 12z"/></svg>
+          </button>
+          <p id="gateTitle">Presentación</p>
+          <span class="gate-sub">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/></svg>
+            Con audio · haz clic para iniciar
+          </span>
+        </div>
+      </div>
+
+      <div class="layer" id="loading" hidden>
+        <div><div class="spin"></div><div id="loadingText">Cargando…</div></div>
+      </div>
+
+      <div class="layer" id="end" hidden>
+        <div>
+          <h2>Fin de la presentación</h2>
+          <button class="btn" type="button" id="replay">Ver de nuevo</button>
+        </div>
+      </div>
+
+      <div class="layer" id="error" hidden>
+        <div class="box">
+          <h2 id="errorTitle">No se pudo abrir la presentación</h2>
+          <p id="errorText"></p>
+          <button class="btn" type="button" data-act="home" id="errorBack">Volver</button>
+        </div>
+      </div>
+    </div>
+
+    <nav id="bar" hidden aria-label="Controles">
+      <button class="ib" type="button" data-act="prev" aria-label="Anterior" title="Anterior (←)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>
+      </button>
+      <span id="count" aria-live="polite">– / –</span>
+      <button class="ib" type="button" data-act="next" aria-label="Siguiente" title="Siguiente (→)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg>
+      </button>
+      <div id="prog" aria-hidden="true"><div id="progFill"></div></div>
+      <button class="ib" type="button" data-act="mute" id="muteBtn" aria-label="Silenciar" title="Silenciar (M)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H3v6h3l5 4z"/><path class="wave" d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/><path class="x" d="M16 9.5l5 5M21 9.5l-5 5" hidden/></svg>
+      </button>
+      <button class="ib" type="button" data-act="fullscreen" aria-label="Pantalla completa" title="Pantalla completa (F)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
+      </button>
+      <button class="ib" type="button" data-act="home" aria-label="Cambiar presentación" title="Cambiar presentación">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>
+      </button>
+    </nav>
+  </div>
+</main>
+
+<script>
+/* ==========================================================================
+   PARÁMETROS (en la URL del reproductor)
+     src          Enlace de OneDrive/SharePoint, código <iframe> (codificado) o URL del .ppsx/.pptx
+     titulo       Texto que se muestra en la pantalla de inicio
+     inicio       "boton" (por defecto: botón Iniciar que desbloquea el audio) | "directo"
+     ui           1 = muestra botón para cambiar de presentación (por defecto oculto si hay src)
+     modo         auto | office | navegador   (solo para URLs de archivos .ppsx/.pptx)
+     diapositiva  Número de diapositiva inicial (modo navegador)
+     ar           Relación de aspecto, ej. 16:9 o 1.777 (si el enlace no la trae)
+     color        Color de acento en hex, ej. 4C8DFF
+   Eventos al contenedor (window.parent.postMessage), solo modo navegador:
+     { source:"reproductor-ppsx", type:"slide", slide, total }   y   { ..., type:"end" }
+   ========================================================================== */
+(() => {
+'use strict';
+
+/* Presentación que se abre automáticamente cuando el reproductor se abre sin ?src=.
+   Vacío = muestra la pantalla de inicio para pegar un enlace o arrastrar un archivo. */
+const DEFAULT_SRC = '';
+const DEFAULT_TITLE = '';
+
+/* Motor para dibujar .ppsx en el navegador (se descarga solo si se necesita) */
+const LIB_URLS = [
+  'https://cdn.jsdelivr.net/npm/pptx-preview@1.0.7/dist/pptx-preview.umd.js',
+  'https://unpkg.com/pptx-preview@1.0.7/dist/pptx-preview.umd.js'
+];
+const OFFICE_BAR = 26;   // alto aprox. de la barra propia del visor de Microsoft
+const EMU_PX = 12700;    // EMU por unidad de dibujo del motor
+const FONT_FALLBACK = 'Lato, "Segoe UI", Calibri, Carlito, "Helvetica Neue", Arial, sans-serif';
+const PPT_EXT = /\.(ppsx|pptx|ppsm|pptm|pps|ppt)$/i;
+
+const $ = (s) => document.querySelector(s);
+const $$ = (s) => Array.from(document.querySelectorAll(s));
+const el = {
+  home: $('#home'), player: $('#player'), box: $('#box'), screen: $('#screen'),
+  officeHost: $('#officeHost'), slideHost: $('#slideHost'), scaler: $('#scaler'), pvHost: $('#pvHost'), hot: $('#hot'),
+  bar: $('#bar'), count: $('#count'), progFill: $('#progFill'), muteBtn: $('#muteBtn'),
+  gate: $('#gate'), gateBtn: $('#gateBtn'), gateTitle: $('#gateTitle'),
+  loading: $('#loading'), loadingText: $('#loadingText'), end: $('#end'), replay: $('#replay'),
+  error: $('#error'), errorTitle: $('#errorTitle'), errorText: $('#errorText'), unlock: $('#unlock'), float: $('#float'),
+  linkForm: $('#linkForm'), linkInput: $('#linkInput'), linkMsg: $('#linkMsg'),
+  drop: $('#drop'), fileInput: $('#fileInput'),
+  embedCard: $('#embedCard'), embedCode: $('#embedCode'), embedNote: $('#embedNote'), copyEmbed: $('#copyEmbed'), copyLink: $('#copyLink')
+};
+
+/* ---------------- Parámetros ---------------- */
+const qs = new URLSearchParams(location.search);
+const P = {
+  src: (qs.get('src') || qs.get('url') || qs.get('archivo') || '').trim(),
+  titulo: qs.get('titulo') || qs.get('title') || '',
+  inicio: (qs.get('inicio') || 'boton').toLowerCase(),
+  modo: (qs.get('modo') || 'auto').toLowerCase(),
+  diapositiva: Math.max(1, parseInt(qs.get('diapositiva') || '1', 10) || 1),
+  ar: parseAr(qs.get('ar')),
+  color: qs.get('color')
+};
+const EMBEDDED = document.getElementById('embeddedDeck');
+P.ui = qs.has('ui') ? qs.get('ui') !== '0' : (!P.src && !EMBEDDED);
+
+if (P.color && /^[0-9a-f]{3,8}$/i.test(P.color)) document.documentElement.style.setProperty('--accent', '#' + P.color);
+
+function parseAr(v) {
+  if (!v) return null;
+  const m = String(v).match(/^(\d+(?:\.\d+)?)\s*[:/x]\s*(\d+(?:\.\d+)?)$/i);
+  const n = m ? parseFloat(m[1]) / parseFloat(m[2]) : parseFloat(v);
+  return isFinite(n) && n > 0.2 && n < 5 ? n : null;
+}
+
+/* ---------------- Estado ---------------- */
+let mode = null;          // 'office' | 'local'
+let aspect = 16 / 9;
+let deck = null;          // presentación local
+let cur = -1;             // índice (en deck.slides) de la diapositiva actual
+let visited = [];
+let muted = false;
+let advTimer = 0;
+let pendingAudio = new Set();
+let lastSrc = '';
+let gatePending = false;
+
+/* ---------------- Utilidades de interfaz ---------------- */
+function setView(v) {
+  document.body.dataset.view = v;
+  el.home.hidden = v !== 'home';
+  el.player.hidden = v !== 'player';
+  if (v === 'player') requestAnimationFrame(fit);
+}
+function showLayer(layer, on) { layer.hidden = !on; }
+function loading(on, text) {
+  if (text) el.loadingText.textContent = text;
+  showLayer(el.loading, on);
+}
+function fail(title, text) {
+  loading(false);
+  el.errorTitle.textContent = title;
+  el.errorText.textContent = text || '';
+  el.errorBack.hidden = !P.ui;
+  showLayer(el.error, true);
+}
+el.errorBack = $('#errorBack');
+
+function fit() {
+  if (el.player.hidden) return;
+  const r = el.player.getBoundingClientRect();
+  const extra = mode === 'office' ? OFFICE_BAR : (mode === 'local' ? el.bar.offsetHeight || 48 : 0);
+  let w = r.width, h = w / aspect + extra;
+  if (h > r.height) { h = r.height; w = Math.max(0, (h - extra) * aspect); }
+  el.box.style.width = Math.floor(w) + 'px';
+  el.box.style.height = Math.floor(h) + 'px';
+  if (mode === 'local' && deck) {
+    const s = Math.floor(w) / deck.W;
+    el.scaler.style.transform = `scale(${s})`;
+  }
+}
+new ResizeObserver(fit).observe(document.documentElement);
+
+const fsEnabled = !!(document.fullscreenEnabled || document.webkitFullscreenEnabled);
+function toggleFullscreen() {
+  const d = document;
+  if (d.fullscreenElement || d.webkitFullscreenElement) {
+    (d.exitFullscreen || d.webkitExitFullscreen).call(d);
+  } else {
+    const t = el.player;
+    (t.requestFullscreen || t.webkitRequestFullscreen).call(t);
+  }
+}
+
+/* Controles flotantes: aparecen al mover el mouse */
+let uiTimer = 0;
+function pokeUi() {
+  el.player.classList.add('show-ui');
+  clearTimeout(uiTimer);
+  uiTimer = setTimeout(() => el.player.classList.remove('show-ui'), 2200);
+}
+el.player.addEventListener('pointermove', pokeUi);
+el.player.addEventListener('pointerdown', pokeUi);
+
+/* Acciones de botones */
+document.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-act]');
+  if (!b) return;
+  const a = b.dataset.act;
+  if (a === 'fullscreen') toggleFullscreen();
+  else if (a === 'home') goHome();
+  else if (a === 'next') next();
+  else if (a === 'prev') prev();
+  else if (a === 'mute') setMuted(!muted);
+});
+
+function applyUiFlags() {
+  $$('[data-act="home"]').forEach((b) => { b.hidden = !P.ui; });
+  $$('[data-act="fullscreen"]').forEach((b) => { b.hidden = !fsEnabled; });
+  el.float.hidden = mode !== 'office' || (!P.ui && !fsEnabled);
+}
+
+/* ---------------- Interpretar el enlace ---------------- */
+function extractSrc(input) {
+  let s = String(input || '').trim();
+  const m = s.match(/<iframe[^>]*\ssrc\s*=\s*["']([^"']+)["']/i);
+  if (m) s = m[1];
+  const t = document.createElement('textarea'); t.innerHTML = s; s = t.value; // decodifica &amp;
+  return s.trim();
+}
+
+/* Devuelve { kind:'office'|'local', url, ar, name } o lanza Error con mensaje en español */
+function resolveSource(raw, modo) {
+  const s = extractSrc(raw);
+  if (!s) throw new Error('Pega un enlace de OneDrive o elige un archivo.');
+  let u;
+  try { u = new URL(s, location.href); } catch (_) { throw new Error('El enlace no es válido.'); }
+  if (u.protocol !== 'https:' && u.protocol !== 'http:' && u.protocol !== 'file:') throw new Error('Solo se aceptan enlaces http(s).');
+  const host = u.hostname.toLowerCase();
+  const ar = parseAr(u.searchParams.get('wdAr')) || P.ar;
+  const name = decodeURIComponent((u.pathname.split('/').pop() || '')).replace(PPT_EXT, '');
+
+  if (u.protocol !== 'file:') {
+    if (host === '1drv.ms') return { kind: 'office', url: u.href, ar };
+    if (host.endsWith('onedrive.live.com') || host.endsWith('live.net')) {
+      u.pathname = u.pathname.replace(/\/(redir|view\.aspx|download)(\.aspx)?$/i, '/embed');
+      return { kind: 'office', url: u.href, ar };
+    }
+    if (host.endsWith('.sharepoint.com') || host.endsWith('.sharepoint.us')) {
+      const act = (u.searchParams.get('action') || '').toLowerCase();
+      if (act !== 'embedview') u.searchParams.set('action', 'embedview');
+      return { kind: 'office', url: u.href, ar };
+    }
+    if (host === 'view.officeapps.live.com') {
+      u.pathname = u.pathname.replace(/\/op\/view\.aspx$/i, '/op/embed.aspx');
+      return { kind: 'office', url: u.href, ar };
+    }
+  }
+
+  if (PPT_EXT.test(u.pathname)) {
+    const isPublic = u.protocol !== 'file:' && !/^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(host);
+    const officeUrl = isPublic ? 'https://view.officeapps.live.com/op/embed.aspx?src=' + encodeURIComponent(u.href) : null;
+    const legacy = /\.(pps|ppt)$/i.test(u.pathname);
+    if (modo === 'office' || legacy) {
+      if (officeUrl) return { kind: 'office', url: officeUrl, ar, name };
+      throw new Error(legacy ? 'El formato antiguo .pps/.ppt solo se puede ver con el visor de Microsoft y necesita una URL pública. Guárdalo como .ppsx.'
+                             : 'El visor de Microsoft necesita una URL pública. Sube el archivo a tu servidor.');
+    }
+    if (u.protocol === 'file:') throw new Error('No se puede abrir una ruta local por enlace. Arrastra el archivo al reproductor.');
+    // motor propio (audio con clic, botones y animaciones); si el servidor no deja leer el archivo, visor de Microsoft
+    return { kind: 'local', url: u.href, ar, name, fallback: modo === 'navegador' ? null : officeUrl };
+  }
+
+  if (u.protocol === 'file:') throw new Error('No se puede abrir una ruta local por enlace. Arrastra el archivo al reproductor.');
+  return { kind: 'office', url: u.href, ar }; // otro enlace de inserción
+}
+
+/* ---------------- Inicio / navegación de vistas ---------------- */
+function resetPlayer() {
+  stopMedia();
+  clearTimeout(advTimer);
+  el.officeHost.replaceChildren();
+  el.pvHost.replaceChildren();
+  el.hot.replaceChildren();
+  el.slideHost.hidden = true;
+  el.bar.hidden = true;
+  [el.gate, el.loading, el.end, el.error, el.unlock].forEach((l) => { l.hidden = true; });
+  if (deck && deck.pv) { try { deck.pv.destroy(); } catch (_) {} }
+  if (deck && deck.revoke) deck.revoke.forEach((u) => URL.revokeObjectURL(u));
+  deck = null; cur = -1; visited = []; mode = null; pendingAudio.clear();
+  gatePending = false;
+  if (gateHandler) { el.gate.removeEventListener('click', gateHandler); gateHandler = null; }
+}
+function goHome() {
+  if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  resetPlayer();
+  setView('home');
+  el.linkInput.focus();
+}
+
+/* El botón "Iniciar" da al navegador el gesto del usuario que necesita para reproducir audio */
+function needsGate(fromGesture) {
+  if (fromGesture) return false;
+  if (P.inicio === 'directo') return false;
+  return !(navigator.userActivation && navigator.userActivation.hasBeenActive);
+}
+let gateHandler = null;
+function gate(title, go) {
+  el.gateTitle.textContent = title || 'Presentación';
+  showLayer(el.gate, true);
+  if (gateHandler) el.gate.removeEventListener('click', gateHandler);
+  gateHandler = (e) => {
+    e && e.preventDefault();
+    el.gate.removeEventListener('click', gateHandler);
+    gateHandler = null;
+    showLayer(el.gate, false);
+    go();
+  };
+  el.gate.addEventListener('click', gateHandler);
+  setTimeout(() => el.gateBtn.focus({ preventScroll: true }), 50);
+}
+
+function openSource(raw, { fromGesture = false, title: forcedTitle = '' } = {}) {
+  const src = resolveSource(raw, P.modo);
+  resetPlayer();
+  lastSrc = extractSrc(raw);
+  aspect = src.ar || 16 / 9;
+  mode = src.kind;
+  applyUiFlags();
+  setView('player');
+  const title = forcedTitle || P.titulo || src.name || 'Presentación';
+  if (src.kind === 'office') {
+    const go = () => loadOffice(src.url);
+    needsGate(fromGesture) ? gate(title, go) : go();
+  } else {
+    const go = () => loadLocalUrl(src.url, title, src.fallback);
+    needsGate(fromGesture) ? gate(title, go) : go();
+  }
+}
+
+/* ---------------- Modo OneDrive / Office ---------------- */
+function loadOffice(url) {
+  loading(true, 'Cargando presentación…');
+  const f = document.createElement('iframe');
+  f.src = url;
+  f.title = P.titulo || 'Presentación';
+  f.setAttribute('allow', 'autoplay; fullscreen; encrypted-media; picture-in-picture; clipboard-write');
+  f.setAttribute('frameborder', '0');
+  let done = false;
+  const ok = () => { if (!done) { done = true; loading(false); } };
+  f.addEventListener('load', ok, { once: true });
+  setTimeout(ok, 12000);
+  el.officeHost.replaceChildren(f);
+  pokeUi();
+  fit();
+}
+
+/* ---------------- Modo navegador (dibujo local) ---------------- */
+let libPromise = null;
+function injectScript(src) {
+  return new Promise((res, rej) => {
+    const s = document.createElement('script');
+    s.src = src; s.async = true;
+    s.onload = () => res(); s.onerror = () => rej(new Error('script'));
+    document.head.appendChild(s);
+  });
+}
+/* Ajustes al motor: usar la fuente latina del archivo (no la asiática) y no comprimir el espaciado */
+function patchLib(code) {
+  return code
+    .replace(/(\w+)\.typeface=(\w+)\.get\((\w+),\["a:ea","attrs","typeface"\]\)/g,
+      '$1.typeface=($2.get($3,["a:latin","attrs","typeface"])||$2.get($3,["a:ea","attrs","typeface"]))')
+    .replace(/else (\w+)\.test\((\w+)\)&&\((\w+)\.style\.letterSpacing=-\.04\*(\w+)\+"px"\)/g, 'else void 0')
+    // el texto de las diapositivas se inserta como texto, nunca como etiquetas HTML
+    .replace(/(\w+)\.innerHTML="string"==typeof (\w+)\?\2:""/g, '$1.innerHTML="string"==typeof $2?$2.replace(/</g,"&lt;").replace(/>/g,"&gt;"):""')
+    // alineación por defecto a la izquierda (como PowerPoint) y soporte de "justificado"
+    .replace(/\{ctr:"center",l:"left",r:"right",dist:"justify"\}\[(\w+)\.align\]\|\|"center"/g,
+      '{ctr:"center",l:"left",r:"right",dist:"justify",just:"justify",justLow:"justify",thaiDist:"justify"}[$1.align]||"left"');
+}
+function loadLib() {
+  if (window.pptxPreview && window.pptxPreview.init) return Promise.resolve(window.pptxPreview);
+  if (libPromise) return libPromise;
+  libPromise = (async () => {
+    for (const url of LIB_URLS) {
+      try {
+        const r = await fetch(url, { mode: 'cors' });
+        if (!r.ok) throw new Error(r.status);
+        const blob = new Blob([patchLib(await r.text())], { type: 'text/javascript' });
+        const bu = URL.createObjectURL(blob);
+        await injectScript(bu);
+        URL.revokeObjectURL(bu);
+        if (window.pptxPreview && window.pptxPreview.init) return window.pptxPreview;
+      } catch (_) { /* sigue con el siguiente método */ }
+      try {
+        await injectScript(url);
+        if (window.pptxPreview && window.pptxPreview.init) return window.pptxPreview;
+      } catch (_) { /* siguiente CDN */ }
+    }
+    libPromise = null;
+    throw new Error('No se pudo descargar el motor de diapositivas. Revisa la conexión a internet.');
+  })();
+  return libPromise;
+}
+
+async function loadLocalUrl(url, title, fallback) {
+  loading(true, 'Descargando presentación…');
+  let buf;
+  try {
+    const r = await fetch(url);
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    buf = await r.arrayBuffer();
+  } catch (e) {
+    if (fallback) {
+      // el servidor no permite leer el archivo desde otro sitio (CORS): se usa el visor de Microsoft
+      mode = 'office';
+      el.slideHost.hidden = true;
+      el.bar.hidden = true;
+      applyUiFlags();
+      loadOffice(fallback);
+      return;
+    }
+    const cross = (() => { try { return new URL(url).origin !== location.origin; } catch (_) { return false; } })();
+    fail('No se pudo descargar la presentación', cross
+      ? 'El servidor donde está el archivo no permite leerlo desde el reproductor. Súbelo al mismo sitio del reproductor o habilita CORS en ese servidor.'
+      : 'Verifica que la dirección del archivo exista. (' + (e.message || e) + ')');
+    return;
+  }
+  await startLocal(buf, title);
+}
+
+async function openFile(file) {
+  if (!file) return;
+  if (!/\.(ppsx|pptx|ppsm|pptm)$/i.test(file.name)) {
+    showLinkMsg(/\.(pps|ppt)$/i.test(file.name)
+      ? 'El formato antiguo .pps/.ppt no se puede leer en el navegador. Guárdalo como .ppsx.'
+      : 'Elige un archivo .ppsx o .pptx.');
+    return;
+  }
+  resetPlayer();
+  mode = 'local';
+  applyUiFlags();
+  setView('player');
+  loading(true, 'Leyendo archivo…');
+  try {
+    await startLocal(await file.arrayBuffer(), file.name.replace(PPT_EXT, ''));
+  } catch (e) {
+    fail('No se pudo abrir el archivo', e.message || String(e));
+  }
+}
+
+async function startLocal(buf, title) {
+  mode = 'local';
+  applyUiFlags();
+  loading(true, 'Preparando diapositivas…');
+  let lib;
+  try { lib = await loadLib(); } catch (e) { return fail('Sin conexión al motor', e.message); }
+
+  el.pvHost.replaceChildren();
+  const pv = lib.init(el.pvHost, { width: 960, height: 540, mode: 'slide' });
+  try { await pv.load(buf); }
+  catch (e) { return fail('No se pudo leer la presentación', 'El archivo parece dañado o no es un .ppsx/.pptx válido.'); }
+
+  const W = pv.pptx.width, H = pv.pptx.height;
+  // Render a tamaño nativo; el escalado lo hace el reproductor
+  pv.options.width = W; pv.options.height = H;
+  pv.wrapper.style.width = W + 'px';
+  pv.wrapper.style.height = H + 'px';
+  pv.htmlRender = new pv.htmlRender.constructor(pv.wrapper, pv.pptx, { viewPort: { width: W, height: H }, mode: 'slide' });
+
+  try {
+    deck = await buildDeck(pv, W, H);
+  } catch (e) {
+    console.warn('[reproductor-ppsx] estructura', e);
+    deck = fallbackDeck(pv, W, H);
+  }
+  deck.title = title;
+  try { await prepareMediaUrls(deck); } catch (e) { console.warn('[reproductor-ppsx] medios', e); deck.mediaUrls = {}; }
+  aspect = W / H;
+  el.scaler.style.width = W + 'px';
+  el.scaler.style.height = H + 'px';
+  el.hot.style.width = W + 'px';
+  el.hot.style.height = H + 'px';
+  pv.wrapper.style.fontFamily = `"${deck.fonts.minor}", ${FONT_FALLBACK}`;
+
+  el.slideHost.hidden = false;
+  el.bar.hidden = false;
+  loading(false);
+  fit();
+
+  const want = Math.min(deck.slides.length, P.diapositiva) - 1;
+  const first = deck.slides[want] && !deck.slides[want].hidden ? want : nextVisible(-1);
+  show(first == null ? 0 : first, { push: false });
+}
+
+/* ---------- Lectura de la estructura del archivo (orden, ocultas, enlaces, audio) ---------- */
+const NS_R = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
+const xml = (s) => new DOMParser().parseFromString(s, 'application/xml');
+const kids = (n, name) => n ? Array.from(n.children).filter((c) => c.localName === name) : [];
+const kid = (n, name) => kids(n, name)[0] || null;
+const all = (n, name) => n ? Array.from(n.getElementsByTagNameNS('*', name)) : [];
+const num = (v, d = 0) => { const n = parseFloat(v); return isFinite(n) ? n : d; };
+
+function resolvePath(baseFile, target) {
+  if (target.startsWith('/')) return target.slice(1);
+  const parts = baseFile.split('/'); parts.pop();
+  for (const seg of target.split('/')) {
+    if (seg === '..') parts.pop(); else if (seg && seg !== '.') parts.push(seg);
+  }
+  return parts.join('/');
+}
+async function readText(zip, path) {
+  const f = zip.file ? zip.file(path) : zip.files[path];
+  return f ? f.async('string') : null;
+}
+async function readRels(zip, partPath) {
+  const parts = partPath.split('/'); const file = parts.pop();
+  const relsPath = [...parts, '_rels', file + '.rels'].join('/');
+  const txt = await readText(zip, relsPath);
+  const map = {};
+  if (!txt) return map;
+  for (const r of all(xml(txt), 'Relationship')) {
+    const external = (r.getAttribute('TargetMode') || '') === 'External';
+    const target = r.getAttribute('Target') || '';
+    map[r.getAttribute('Id')] = { type: r.getAttribute('Type') || '', external, target: external ? target : resolvePath(partPath, target) };
+  }
+  return map;
+}
+
+function fallbackDeck(pv, W, H) {
+  return {
+    pv, W, H, zip: pv.pptx._zipContents, kiosk: false, loop: false, fonts: { major: 'Calibri', minor: 'Calibri' }, medias: pv.pptx.medias || {},
+    slides: pv.pptx.slides.map((s, i) => ({ name: s.name, pvIndex: i, hidden: false, shapes: [], info: {}, anim: { main: [], inter: [] }, autoMedia: [], vols: {}, advTm: null, advClick: true }))
+  };
+}
+
+async function buildDeck(pv, W, H) {
+  const zip = pv.pptx._zipContents;
+  const presRels = await readRels(zip, 'ppt/presentation.xml');
+  const pres = xml(await readText(zip, 'ppt/presentation.xml'));
+  const order = all(pres, 'sldId').map((n) => {
+    const rel = presRels[n.getAttributeNS(NS_R, 'id') || n.getAttribute('r:id')];
+    return rel && rel.target;
+  }).filter(Boolean);
+
+  const pvIndexByName = {};
+  pv.pptx.slides.forEach((s, i) => { pvIndexByName[s.name] = i; });
+
+  // Propiedades de la presentación (modo quiosco, bucle)
+  let kiosk = false, loop = false;
+  const props = await readText(zip, 'ppt/presProps.xml');
+  if (props) {
+    const sp = all(xml(props), 'showPr')[0];
+    if (sp) { kiosk = !!kid(sp, 'kiosk'); loop = sp.getAttribute('loop') === '1' || sp.getAttribute('loop') === 'true'; }
+  }
+
+  // Fuentes del tema
+  const fonts = { major: 'Calibri', minor: 'Calibri' };
+  const themePath = Object.keys(zip.files).find((p) => /^ppt\/theme\/theme\d+\.xml$/.test(p));
+  if (themePath) {
+    const th = xml(await readText(zip, themePath));
+    const maj = all(th, 'majorFont')[0], min = all(th, 'minorFont')[0];
+    const lat = (n) => { const l = n && kid(n, 'latin'); return l && l.getAttribute('typeface'); };
+    fonts.major = lat(maj) || fonts.major; fonts.minor = lat(min) || fonts.minor;
+  }
+
+  const names = order.length ? order : pv.pptx.slides.map((s) => s.name);
+  const slides = [];
+  for (const name of names) {
+    if (!(name in pvIndexByName)) continue;
+    const doc = xml(await readText(zip, name));
+    const rels = await readRels(zip, name);
+    slides.push(parseSlide(doc, rels, name, pvIndexByName[name]));
+  }
+  // Resolver saltos a diapositivas → índice
+  const idxByName = {}; slides.forEach((s, i) => { idxByName[s.name] = i; });
+  for (const s of slides) for (const sh of s.shapes) if (sh.link && sh.link.slide) sh.link.index = idxByName[sh.link.slide];
+  return { pv, W, H, zip, kiosk, loop, fonts, slides, medias: pv.pptx.medias || {} };
+}
+
+function parseSlide(doc, rels, name, pvIndex) {
+  const root = doc.documentElement;
+  const hidden = root.getAttribute('show') === '0' || root.getAttribute('show') === 'false';
+  const shapes = [];   // formas con posición (en orden de dibujo)
+  const info = {};     // id -> { name, parent, hidden, noLine, geom }
+  const cSld = kid(root, 'cSld');
+  const tree = cSld && kid(cSld, 'spTree');
+
+  const readLink = (h) => {
+    if (!h) return null;
+    const action = h.getAttribute('action') || '';
+    const rid = h.getAttributeNS(NS_R, 'id') || h.getAttribute('r:id') || '';
+    const rel = rid && rels[rid];
+    if (action.startsWith('ppaction://hlinkshowjump')) {
+      const m = action.match(/jump=(\w+)/); return { jump: m ? m[1].toLowerCase() : 'nextslide' };
+    }
+    if (action.startsWith('ppaction://hlinksldjump')) return rel ? { slide: rel.target } : null;
+    if (action.startsWith('ppaction://media')) return { media: true };
+    // documentos vinculados (p. ej. documentos/instructivo.pdf junto a la presentación)
+    if (action.startsWith('ppaction://hlinkfile') && rel && rel.external && !/^[a-z][a-z0-9+.-]*:/i.test(rel.target) && !rel.target.startsWith('//')) return { url: rel.target, file: true };
+    if (action && action.startsWith('ppaction://')) return null; // macros, programas…
+    if (rel && rel.external && /^(https?:|mailto:)/i.test(rel.target)) return { url: rel.target };
+    if (rel && !rel.external && /slides\/slide\d+\.xml$/.test(rel.target)) return { slide: rel.target };
+    return null;
+  };
+
+  const walk = (container, T, parent) => {
+    for (const node of Array.from(container.children)) {
+      if (node.localName === 'AlternateContent') {
+        const choice = kid(node, 'Choice') || kid(node, 'Fallback');
+        if (!choice) continue;
+        for (const c of Array.from(choice.children)) handle(c, T, parent);
+        continue;
+      }
+      handle(node, T, parent);
+    }
+  };
+  const handle = (node, T, parent) => {
+    const ln = node.localName;
+    if (!['sp', 'pic', 'cxnSp', 'graphicFrame', 'grpSp', 'contentPart'].includes(ln)) return;
+    const nv = Array.from(node.children).find((c) => /^nv/.test(c.localName));
+    const cNvPr = nv && kid(nv, 'cNvPr');
+    const id = cNvPr && cNvPr.getAttribute('id');
+    const shapeName = (cNvPr && cNvPr.getAttribute('name')) || '';
+    let xfrm = null, spPr = null;
+    if (ln === 'grpSp') { const g = kid(node, 'grpSpPr'); xfrm = g && kid(g, 'xfrm'); }
+    else if (ln === 'graphicFrame') xfrm = kid(node, 'xfrm');
+    else { spPr = kid(node, 'spPr'); xfrm = spPr && kid(spPr, 'xfrm'); }
+    let rect = null, cx = 0, cy = 0;
+    if (xfrm) {
+      const off = kid(xfrm, 'off'), ext = kid(xfrm, 'ext');
+      if (off && ext) {
+        const x = num(off.getAttribute('x')), y = num(off.getAttribute('y'));
+        cx = num(ext.getAttribute('cx')); cy = num(ext.getAttribute('cy'));
+        rect = { x: x * T.sx + T.tx, y: y * T.sy + T.ty, w: cx * T.sx, h: cy * T.sy };
+      }
+    }
+    // enlace a nivel de forma, o el primero dentro del texto
+    let link = readLink(cNvPr && kid(cNvPr, 'hlinkClick'));
+    if (!link && ln === 'sp') {
+      const tx = kid(node, 'txBody');
+      link = readLink(tx && all(tx, 'hlinkClick')[0]);
+    }
+    // medios (audio / video)
+    let media = null;
+    if (ln === 'pic' && nv) {
+      const nvPr = kid(nv, 'nvPr');
+      const af = nvPr && (kid(nvPr, 'audioFile') || kid(nvPr, 'videoFile'));
+      if (af) {
+        const p14 = all(nvPr, 'media')[0];
+        const rid = (p14 && (p14.getAttributeNS(NS_R, 'embed') || p14.getAttribute('r:embed'))) || af.getAttributeNS(NS_R, 'link') || af.getAttribute('r:link');
+        const rel = rid && rels[rid];
+        if (rel && !rel.external) media = { path: rel.target, kind: af.localName === 'audioFile' ? 'audio' : 'video' };
+      }
+    }
+    // correcciones de dibujo
+    let noLine = false, geom = null;
+    if (spPr) {
+      const l = kid(spPr, 'ln');
+      noLine = !!(l && kid(l, 'noFill'));
+      const cg = kid(spPr, 'custGeom');
+      if (cg) geom = parseGeom(cg, cx, cy);
+    }
+    if (id) info[id] = { name: shapeName, parent, hidden: !!cNvPr && /^(1|true)$/.test(cNvPr.getAttribute('hidden') || ''), noLine, geom };
+    if (rect) shapes.push({ id, name: shapeName, rect, link, media, group: ln === 'grpSp' });
+    if (ln === 'grpSp') {
+      let CT = T;
+      if (xfrm) {
+        const off = kid(xfrm, 'off'), ext = kid(xfrm, 'ext'), chOff = kid(xfrm, 'chOff'), chExt = kid(xfrm, 'chExt');
+        if (off && ext && chOff && chExt) {
+          const sx = num(ext.getAttribute('cx')) / (num(chExt.getAttribute('cx')) || 1);
+          const sy = num(ext.getAttribute('cy')) / (num(chExt.getAttribute('cy')) || 1);
+          const tx = num(off.getAttribute('x')) - num(chOff.getAttribute('x')) * sx;
+          const ty = num(off.getAttribute('y')) - num(chOff.getAttribute('y')) * sy;
+          CT = { sx: T.sx * sx, sy: T.sy * sy, tx: T.tx + tx * T.sx, ty: T.ty + ty * T.sy };
+        }
+      }
+      walk(node, CT, id);
+    }
+  };
+  if (tree) walk(tree, { sx: 1, sy: 1, tx: 0, ty: 0 }, null);
+
+  // Animaciones: secuencia principal y disparadores (clic sobre una forma)
+  const anim = { main: [], inter: [] }, vols = {};
+  const timing = kid(root, 'timing');
+  if (timing) {
+    for (const cm of all(timing, 'cMediaNode')) {
+      const t = all(cm, 'spTgt')[0];
+      if (t && cm.hasAttribute('vol')) vols[t.getAttribute('spid')] = num(cm.getAttribute('vol'), 100000) / 100000;
+    }
+    for (const c of all(timing, 'cTn')) {
+      const nt = c.getAttribute('nodeType');
+      if (nt === 'mainSeq') anim.main = parseSeq(c, true);
+      else if (nt === 'interactiveSeq') {
+        const cond = all(kid(c, 'stCondLst'), 'cond').find((x) => x.getAttribute('evt') === 'onClick');
+        const trg = cond && all(cond, 'spTgt')[0];
+        if (trg) anim.inter.push({ trigger: trg.getAttribute('spid'), effects: parseSeq(c, false) });
+      }
+    }
+  }
+  // Botones play/pausa que solo intercambian íconos: se les asocia el audio de la diapositiva
+  const audios = shapes.filter((x) => x.media && x.media.kind === 'audio');
+  const interHasMedia = anim.inter.some((q) => q.effects.some((e) => e.cmd));
+  if (audios.length && !interHasMedia) {
+    for (const q of anim.inter) {
+      const nm = (info[q.trigger] && info[q.trigger].name) || '';
+      const swaps = q.effects.some((e) => e.cls === 'exit' && e.spid === q.trigger) && q.effects.some((e) => e.cls === 'entr');
+      if (swaps || /play|pause|pausa|audio|sonido|reproduc|escuch/i.test(nm)) q.effects.unshift({ cls: 'mediacall', cmd: 'togglepause', spid: audios[0].id, start: 0, dur: 0 });
+    }
+  }
+  // Transición: avance automático por tiempo / clic
+  let advTm = null, advClick = true;
+  const tr = all(root, 'transition')[0];
+  if (tr) {
+    if (tr.hasAttribute('advTm')) advTm = num(tr.getAttribute('advTm'), null);
+    if (tr.getAttribute('advClick') === '0' || tr.getAttribute('advClick') === 'false') advClick = false;
+  }
+  const autoMedia = anim.main.filter((e) => e.auto && e.cmd && e.cmd.startsWith('playfrom')).map((e) => e.spid);
+  return { name, pvIndex, hidden, shapes, info, anim, autoMedia, vols, advTm, advClick };
+}
+
+/* Secuencia de animación → lista de efectos con su instante de inicio (ms) */
+function condDelay(cTn) {
+  const cl = cTn && kid(cTn, 'stCondLst');
+  for (const c of kids(cl, 'cond')) { const d = c.getAttribute('delay'); if (d && d !== 'indefinite' && isFinite(+d)) return +d; }
+  return 0;
+}
+function readEffect(ec) {
+  const e = { cls: ec.getAttribute('presetClass'), preset: ec.getAttribute('presetID'), nodeType: ec.getAttribute('nodeType'), spid: null, dur: 0, repeat: false, autoRev: false, path: null, cmd: null };
+  const t = all(ec, 'spTgt')[0]; e.spid = t && t.getAttribute('spid');
+  for (const c of [ec, ...all(ec, 'cTn')]) {
+    const d = c.getAttribute('dur'); if (d && isFinite(+d)) e.dur = Math.max(e.dur, +d);
+    if (c.getAttribute('repeatCount') === 'indefinite') e.repeat = true;
+    if (c.getAttribute('autoRev') === '1' || c.getAttribute('autoRev') === 'true') e.autoRev = true;
+  }
+  const mo = all(ec, 'animMotion')[0];
+  if (mo) {
+    const nums = (mo.getAttribute('path') || '').match(/-?\d*\.?\d+(?:e-?\d+)?/gi) || [];
+    if (nums.length >= 2) e.path = { dx: parseFloat(nums[nums.length - 2]), dy: parseFloat(nums[nums.length - 1]) };
+  }
+  const cmd = all(ec, 'cmd')[0];
+  if (cmd) e.cmd = (cmd.getAttribute('cmd') || '').toLowerCase();
+  return e;
+}
+function parseSeq(seqCTn, isMain) {
+  const out = [];
+  let t = 0;
+  kids(kid(seqCTn, 'childTnLst'), 'par').forEach((gp, gi) => {
+    const g = kid(gp, 'cTn');
+    const onBegin = all(kid(g, 'stCondLst'), 'cond').some((c) => c.getAttribute('evt') === 'onBegin');
+    const first = all(g, 'cTn').find((c) => c.hasAttribute('presetClass'));
+    const firstType = first && first.getAttribute('nodeType');
+    const auto = !isMain || onBegin || (gi === 0 && firstType !== 'clickEffect') || firstType === 'afterEffect' || firstType === 'withEffect';
+    let gEnd = t;
+    for (const sub of kids(kid(g, 'childTnLst'), 'par')) {
+      const sc = kid(sub, 'cTn');
+      const d1 = condDelay(sc);
+      for (const ep of kids(kid(sc, 'childTnLst'), 'par')) {
+        const ec = kid(ep, 'cTn');
+        if (!ec || !ec.hasAttribute('presetClass')) continue;
+        const e = readEffect(ec);
+        e.start = t + d1 + condDelay(ec);
+        e.auto = auto;
+        out.push(e);
+        if (!e.repeat) gEnd = Math.max(gEnd, e.start + e.dur);
+      }
+    }
+    if (auto) t = gEnd;
+  });
+  return out;
+}
+
+/* Geometría libre (custGeom): todas las rutas, con o sin w/h */
+function parseGeom(cg, cx, cy) {
+  const lst = kid(cg, 'pathLst');
+  const paths = [];
+  for (const p of kids(lst, 'path')) {
+    const cmds = [];
+    let ok = true;
+    const pt = (n) => { const x = parseFloat(n.getAttribute('x')), y = parseFloat(n.getAttribute('y')); if (!isFinite(x) || !isFinite(y)) ok = false; return [x, y]; };
+    for (const c of Array.from(p.children)) {
+      const pts = kids(c, 'pt').map(pt);
+      switch (c.localName) {
+        case 'moveTo': cmds.push({ t: 'M', pts }); break;
+        case 'lnTo': cmds.push({ t: 'L', pts }); break;
+        case 'cubicBezTo': cmds.push({ t: 'C', pts }); break;
+        case 'quadBezTo': cmds.push({ t: 'Q', pts }); break;
+        case 'arcTo': cmds.push({ t: 'A', wR: num(c.getAttribute('wR')), hR: num(c.getAttribute('hR')), st: num(c.getAttribute('stAng')), sw: num(c.getAttribute('swAng')) }); break;
+        case 'close': cmds.push({ t: 'Z' }); break;
+      }
+    }
+    if (ok && cmds.length) paths.push({ w: num(p.getAttribute('w')), h: num(p.getAttribute('h')), cmds });
+  }
+  return paths.length ? { cx, cy, paths, needs: paths.length > 1 || paths.some((p) => !p.w || !p.h) } : null;
+}
+function geomToD(g, Wpx, Hpx) {
+  let d = '';
+  const f = (v) => (Math.round(v * 100) / 100);
+  for (const p of g.paths) {
+    const sx = p.w ? Wpx / p.w : (g.cx ? Wpx / g.cx : 0);
+    const sy = p.h ? Hpx / p.h : (g.cy ? Hpx / g.cy : 0);
+    let x0 = 0, y0 = 0;
+    for (const c of p.cmds) {
+      if (c.t === 'M' || c.t === 'L') { x0 = c.pts[0][0] * sx; y0 = c.pts[0][1] * sy; d += `${c.t}${f(x0)} ${f(y0)}`; }
+      else if (c.t === 'C' || c.t === 'Q') {
+        d += c.t + c.pts.map(([x, y]) => `${f(x * sx)} ${f(y * sy)}`).join(' ');
+        const last = c.pts[c.pts.length - 1]; x0 = last[0] * sx; y0 = last[1] * sy;
+      } else if (c.t === 'A') {
+        const rx = c.wR * sx, ry = c.hR * sy;
+        const st = c.st / 60000 * Math.PI / 180, sw = c.sw / 60000 * Math.PI / 180;
+        const ox = x0 - rx * Math.cos(st), oy = y0 - ry * Math.sin(st);
+        const ex = ox + rx * Math.cos(st + sw), ey = oy + ry * Math.sin(st + sw);
+        d += `A${f(rx)} ${f(ry)} 0 ${Math.abs(sw) > Math.PI ? 1 : 0} ${sw > 0 ? 1 : 0} ${f(ex)} ${f(ey)}`;
+        x0 = ex; y0 = ey;
+      } else if (c.t === 'Z') d += 'Z';
+    }
+  }
+  return d;
+}
+
+/* ---------- Mostrar diapositivas ---------- */
+function nextVisible(i) {
+  for (let j = i + 1; j < deck.slides.length; j++) if (!deck.slides[j].hidden) return j;
+  return null;
+}
+function prevVisible(i) {
+  for (let j = i - 1; j >= 0; j--) if (!deck.slides[j].hidden) return j;
+  return null;
+}
+function visibleCount() { return deck.slides.filter((s) => !s.hidden).length || deck.slides.length; }
+function visiblePos(i) { let n = 0; for (let j = 0; j <= i; j++) if (!deck.slides[j].hidden) n++; return Math.max(1, n); }
+
+function show(idx, { push = true } = {}) {
+  if (!deck || idx == null || idx < 0 || idx >= deck.slides.length) return;
+  stopMedia();
+  clearTimeout(advTimer);
+  el.end.hidden = true;
+  if (push && cur >= 0 && cur !== idx) visited.push(cur);
+  cur = idx;
+  const s = deck.slides[idx];
+  let slideEl = null;
+  try {
+    deck.pv.renderSingleSlide(s.pvIndex);
+    slideEl = deck.pv.wrapper.querySelector('.pptx-preview-slide-wrapper-' + s.pvIndex);
+  } catch (e) {
+    console.warn('[reproductor-ppsx] no se pudo dibujar la diapositiva', idx + 1, e);
+  }
+  if (slideEl) {
+    slideEl.classList.add('enter');
+    fixFonts(slideEl);
+    wireSlide(slideEl, s);
+  } else {
+    el.hot.replaceChildren();
+  }
+  updateBar();
+  scheduleAdvance(s);
+  post({ type: 'slide', slide: visiblePos(idx), total: visibleCount() });
+}
+
+/* Peso y estilo según el nombre de la fuente (p. ej. "Sura Sans Extranegrita", "… Ligera", "… Itálica") */
+function fontWeightFromName(n) {
+  if (/extra\s*negrita|extra\s*bold|black|heavy|ultra\s*bold/i.test(n)) return 800;
+  if (/semi\s*negrita|semi\s*bold|demi/i.test(n)) return 600;
+  if (/negrita|bold/i.test(n)) return 700;
+  if (/ligera|light|thin|fina/i.test(n)) return 300;
+  return 0;
+}
+function fixFonts(root) {
+  for (const sp of root.querySelectorAll('span')) {
+    let ff = sp.style.fontFamily;
+    if (!ff) continue;
+    ff = ff.split(',')[0].replace(/["']/g, '').trim();
+    if (/^\+mj/i.test(ff)) ff = deck.fonts.major;
+    else if (/^\+mn/i.test(ff)) ff = deck.fonts.minor;
+    sp.style.fontFamily = `"${ff}", ${FONT_FALLBACK}`;
+    const w = fontWeightFromName(ff);
+    const isBold = sp.style.fontWeight === 'bold' || +sp.style.fontWeight >= 700;
+    if (w && !(isBold && w < 700)) sp.style.fontWeight = String(w);
+    if (/it[aá]lic|oblique|cursiva/i.test(ff)) sp.style.fontStyle = 'italic';
+  }
+}
+
+function next() {
+  if (!deck) return;
+  if (!el.end.hidden) return;
+  const n = nextVisible(cur);
+  if (n != null) show(n);
+  else if (deck.loop) show(nextVisible(-1) ?? 0);
+  else endShow();
+}
+function prev() {
+  if (!deck) return;
+  if (!el.end.hidden) { el.end.hidden = true; updateBar(); return; }
+  const p = prevVisible(cur);
+  if (p != null) show(p);
+}
+function endShow() {
+  stopMedia();
+  clearTimeout(advTimer);
+  el.end.hidden = false;
+  updateBar(true);
+  post({ type: 'end', slide: visibleCount(), total: visibleCount() });
+}
+el.replay.addEventListener('click', () => { visited = []; show(nextVisible(-1) ?? 0, { push: false }); });
+
+function doLink(link) {
+  if (!link) return;
+  if (link.url) {
+    let u = link.url;
+    try { u = new URL(link.url, location.href).href; } catch (_) {}
+    window.open(u, '_blank', 'noopener');
+    return;
+  }
+  if (link.index != null) { show(link.index); return; }
+  switch (link.jump) {
+    case 'nextslide': next(); break;
+    case 'previousslide': prev(); break;
+    case 'firstslide': show(nextVisible(-1) ?? 0); break;
+    case 'lastslide': show(prevVisible(deck.slides.length) ?? deck.slides.length - 1); break;
+    case 'lastslideviewed': if (visited.length) show(visited.pop(), { push: false }); break;
+    case 'endshow': endShow(); break;
+  }
+}
+
+function updateBar(atEnd) {
+  if (!deck) return;
+  const total = visibleCount();
+  const pos = atEnd ? total : visiblePos(cur);
+  el.count.textContent = `${pos} / ${total}`;
+  el.progFill.style.width = (atEnd ? 100 : (pos / total) * 100) + '%';
+  $('[data-act="prev"]').disabled = !atEnd && prevVisible(cur) == null;
+  $('[data-act="next"]').disabled = !!atEnd;
+}
+
+function scheduleAdvance(s) {
+  if (s.advTm == null) return;
+  advTimer = setTimeout(function tick() {
+    if (deck && deck.slides[cur] === s) {
+      const busy = currentMedia().some((m) => m.auto && m.el && !m.el.paused && !m.el.ended);
+      if (busy) { advTimer = setTimeout(tick, 400); return; }
+      next();
+    }
+  }, Math.max(0, s.advTm));
+}
+
+/* ---------- Audio y video ---------- */
+let mediaList = [];
+function currentMedia() { return mediaList; }
+
+const MIME = {
+  mp3: 'audio/mpeg', m4a: 'audio/mp4', m4r: 'audio/mp4', aac: 'audio/aac', wav: 'audio/wav', ogg: 'audio/ogg', oga: 'audio/ogg',
+  opus: 'audio/ogg', flac: 'audio/flac', wma: 'audio/x-ms-wma', mid: 'audio/midi', midi: 'audio/midi',
+  mp4: 'video/mp4', m4v: 'video/mp4', mov: 'video/quicktime', webm: 'video/webm', wmv: 'video/x-ms-wmv', mpg: 'video/mpeg', mpeg: 'video/mpeg'
+};
+/* Prepara una URL reproducible para cada audio/video del archivo (m4a, mp3, wav, mp4…) */
+async function prepareMediaUrls(d) {
+  d.mediaUrls = {};
+  const paths = new Set();
+  d.slides.forEach((s) => s.shapes.forEach((sh) => { if (sh.media) paths.add(sh.media.path); }));
+  for (const path of paths) {
+    const f = d.zip && d.zip.file(path);
+    if (!f) continue;
+    const ext = path.split('.').pop().toLowerCase();
+    const data = await f.async('arraybuffer');
+    const url = URL.createObjectURL(new Blob([data], { type: MIME[ext] || 'application/octet-stream' }));
+    d.mediaUrls[path] = url;
+    (d.revoke = d.revoke || []).push(url);
+  }
+}
+
+/* ---------- Correspondencia forma ↔ elemento dibujado ---------- */
+function nodeId(n) {
+  const src = n && n.source;
+  if (!src) return null;
+  const k = Object.keys(src).find((x) => /^p:nv/.test(x));
+  const c = k && src[k] && src[k]['p:cNvPr'];
+  return (c && c.attrs && c.attrs.id) || null;
+}
+function mapDom(slideEl, pvSlide) {
+  const map = {};
+  const rootEl = slideEl.querySelector('.slide-wrapper');
+  const walkN = (nodes, parentEl) => {
+    const kidsEl = Array.from(parentEl.children);
+    // el motor dibuja las formas ordenadas por su posición en el XML
+    const sorted = (nodes || []).slice().sort((p, q) => (+p.order || 0) - (+q.order || 0));
+    sorted.forEach((n, i) => {
+      const x = kidsEl[i];
+      if (!x) return;
+      const id = nodeId(n);
+      if (id && !map[id]) map[id] = x;
+      if (n.nodes && n.nodes.length) walkN(n.nodes, x);
+    });
+  };
+  if (rootEl && pvSlide) walkN(pvSlide.nodes, rootEl);
+  return map;
+}
+function fixShapes(s, dom) {
+  for (const [id, inf] of Object.entries(s.info)) {
+    const x = dom[id];
+    if (!x) continue;
+    const svg = Array.from(x.children).find((c) => c.tagName && c.tagName.toLowerCase() === 'svg');
+    if (inf.noLine && svg) svg.querySelectorAll('path,rect,ellipse,circle,polygon,polyline,line').forEach((g) => { g.setAttribute('stroke', 'none'); g.setAttribute('stroke-width', '0'); });
+    if (inf.geom && svg) {
+      const path = svg.querySelector('path');
+      const d = path && path.getAttribute('d');
+      if (path && (inf.geom.needs || !d || /NaN/.test(d))) {
+        const w = parseFloat(x.style.width) || 0, h = parseFloat(x.style.height) || 0;
+        path.setAttribute('d', geomToD(inf.geom, w, h));
+      }
+    }
+  }
+}
+
+/* ---------- Animaciones (entradas, salidas, trayectorias) ---------- */
+let fx = { timers: [], state: {}, dom: {}, slide: null };
+function clearFx() { fx.timers.forEach(clearTimeout); fx.timers = []; }
+function later(ms, fn) { if (!ms || ms <= 0) fn(); else fx.timers.push(setTimeout(fn, ms)); }
+function isShown(id) {
+  const s = fx.slide;
+  let cur = id, guard = 0;
+  while (cur && guard++ < 50) {
+    if (fx.state[cur] === false) return false;
+    cur = s && s.info[cur] ? s.info[cur].parent : null;
+  }
+  return true;
+}
+function refreshHot() { el.hot.querySelectorAll('.hot').forEach((b) => { b.hidden = !isShown(b.dataset.sid); }); }
+function setVis(id, on, dur) {
+  fx.state[id] = on;
+  const x = fx.dom[id];
+  if (x) {
+    dur = Math.max(0, Math.min(dur || 0, 1200));
+    if (on) {
+      x.style.transition = 'none';
+      if (dur) { x.style.opacity = '0'; x.style.visibility = ''; void x.offsetWidth; x.style.transition = `opacity ${dur}ms ease`; }
+      x.style.visibility = '';
+      x.style.opacity = '';
+    } else {
+      x.style.transition = dur ? `opacity ${dur}ms ease` : 'none';
+      x.style.opacity = '0';
+      if (dur) later(dur, () => { if (fx.state[id] === false) x.style.visibility = 'hidden'; });
+      else x.style.visibility = 'hidden';
+    }
+  }
+  refreshHot();
+}
+/* Trayectorias: la posición guardada en el archivo es la posición final (así las muestra
+   PowerPoint para la web); la forma "llega" a su lugar recorriendo la trayectoria. */
+function moveBy(e, animate) {
+  const x = fx.dom[e.spid];
+  if (!x || !e.path || !deck) return;
+  const dx = e.path.dx * deck.W, dy = e.path.dy * deck.H;
+  if (!x.animate) return;
+  if (e.repeat) {
+    x.animate([{ translate: '0px 0px' }, { translate: `${dx.toFixed(2)}px ${dy.toFixed(2)}px` }], { duration: Math.max(300, e.dur || 1000), iterations: Infinity, direction: e.autoRev ? 'alternate' : 'normal', easing: 'ease-in-out' });
+  } else if (animate) {
+    x.animate([{ translate: `${(-dx).toFixed(2)}px ${(-dy).toFixed(2)}px` }, { translate: '0px 0px' }], { duration: Math.max(1, e.dur || 500), easing: 'ease-out', fill: 'backwards' });
+  }
+}
+function runEffect(e, items) {
+  if (e.cmd) { runMediaCmd(items[e.spid], e.cmd); return; }
+  if (!e.spid) return;
+  if (e.cls === 'entr') setVis(e.spid, true, e.dur || 500);
+  else if (e.cls === 'exit') setVis(e.spid, false, e.dur || 500);
+  else if (e.cls === 'path') moveBy(e, true);
+}
+function startAnimations(s, items) {
+  // estado inicial: ocultas por atributo, y las que entran con un disparador
+  for (const [id, inf] of Object.entries(s.info)) if (inf.hidden) setVis(id, false, 0);
+  const mainEntr = new Set(s.anim.main.filter((e) => e.cls === 'entr').map((e) => e.spid));
+  const firstInter = {};
+  s.anim.inter.forEach((q) => q.effects.forEach((e) => { if (e.spid && (e.cls === 'entr' || e.cls === 'exit') && !(e.spid in firstInter)) firstInter[e.spid] = e.cls; }));
+  for (const [id, cls] of Object.entries(firstInter)) if (cls === 'entr' && !mainEntr.has(id)) setVis(id, false, 0);
+  // secuencia principal: lo automático se anima; lo "al hacer clic" queda en su estado final
+  for (const e of s.anim.main) {
+    if (e.cmd) continue; // el audio automático se programa aparte
+    if (e.cls === 'entr') {
+      if (e.auto) { setVis(e.spid, false, 0); later(e.start, () => setVis(e.spid, true, e.dur || 500)); }
+    } else if (e.cls === 'exit') {
+      if (e.auto) later(e.start, () => setVis(e.spid, false, e.dur || 500)); else setVis(e.spid, false, 0);
+    } else if (e.cls === 'path' && e.path) {
+      if (e.repeat) later(e.start, () => moveBy(e, true));
+      else if (e.auto) later(e.start, () => moveBy(e, true));
+      else moveBy(e, false);
+    }
+  }
+}
+function runTrigger(q, items) {
+  for (const e of q.effects) {
+    if (!e.start) runEffect(e, items); // inmediato: mantiene el gesto del usuario para el audio
+    else later(e.start, () => runEffect(e, items));
+  }
+}
+
+function wireSlide(slideEl, s) {
+  el.hot.replaceChildren();
+  mediaList = [];
+  clearFx();
+  fx.state = {};
+  fx.slide = s;
+  fx.dom = mapDom(slideEl, deck.pv.pptx.slides[s.pvIndex]);
+  try { fixShapes(s, fx.dom); } catch (e) { console.warn('[reproductor-ppsx] formas', e); }
+
+  // El motor dibuja sus propios reproductores; los ocultamos y usamos los nuestros
+  slideEl.querySelectorAll('audio,video').forEach((x) => { try { x.pause(); } catch (_) {} x.muted = true; x.style.display = 'none'; });
+  const bySpid = {};
+  for (const sh of s.shapes) {
+    if (!sh.media) continue;
+    const url = deck.mediaUrls && deck.mediaUrls[sh.media.path];
+    if (!url) continue;
+    let m;
+    if (sh.media.kind === 'audio') {
+      m = new Audio();
+      m.preload = 'auto';
+      m.src = url;
+    } else {
+      m = document.createElement('video');
+      m.src = url;
+      m.className = 'vid';
+      m.controls = true;
+      const r = sh.rect;
+      Object.assign(m.style, { left: r.x / EMU_PX + 'px', top: r.y / EMU_PX + 'px', width: r.w / EMU_PX + 'px', height: r.h / EMU_PX + 'px' });
+    }
+    const item = { spid: sh.id, el: m, kind: sh.media.kind, auto: s.autoMedia.includes(sh.id), shape: sh, btns: [] };
+    prepareMedia(item, s.vols[sh.id]);
+    mediaList.push(item);
+    bySpid[sh.id] = item;
+  }
+
+  // zonas clicables: disparadores > enlaces > ícono de audio
+  const trigBy = {};
+  for (const q of s.anim.inter) (trigBy[q.trigger] = trigBy[q.trigger] || []).push(q);
+  for (const sh of s.shapes) {
+    if (!sh.rect || sh.rect.w <= 0 || sh.rect.h <= 0) continue;
+    const trig = trigBy[sh.id];
+    const item = bySpid[sh.id];
+    const trigMedia = trig && trig.flatMap((q) => q.effects).filter((e) => e.cmd && bySpid[e.spid]).map((e) => bySpid[e.spid]);
+    let handler = null, label = '', isMedia = false;
+    if (trig) {
+      handler = () => trig.forEach((q) => runTrigger(q, bySpid));
+      isMedia = !!(trigMedia && trigMedia.length);
+      label = isMedia ? 'Reproducir o pausar audio' : 'Mostrar contenido';
+    } else if (sh.link && sh.link.media && item) {
+      handler = () => toggleMedia(item); label = 'Reproducir o pausar audio'; isMedia = true;
+    } else if (sh.link && !sh.link.media) {
+      handler = () => doLink(sh.link);
+      label = sh.link.file ? 'Abrir documento' : (sh.link.url ? 'Abrir enlace' : 'Ir a otra diapositiva');
+    } else if (item && item.kind === 'audio') {
+      handler = () => toggleMedia(item); label = 'Reproducir o pausar audio'; isMedia = true;
+    }
+    if (item && item.kind === 'video') el.hot.appendChild(item.el);
+    if (!handler) continue;
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'hot' + (isMedia ? ' media' : '');
+    b.dataset.sid = sh.id;
+    b.setAttribute('aria-label', label);
+    const r = sh.rect;
+    Object.assign(b.style, { left: r.x / EMU_PX + 'px', top: r.y / EMU_PX + 'px', width: r.w / EMU_PX + 'px', height: r.h / EMU_PX + 'px' });
+    b.addEventListener('click', (e) => { e.stopPropagation(); handler(); });
+    el.hot.appendChild(b);
+    const swapsIcons = trig && trig.some((q) => q.effects.some((e) => e.cls === 'entr' || e.cls === 'exit'));
+    const targets = trig ? (trigMedia || []) : (item ? [item] : []);
+    if (isMedia && !swapsIcons) targets.forEach((t) => t.btns.push(b));
+  }
+  mediaList.forEach((m) => {
+    const sync = () => {
+      const on = !m.el.paused && !m.el.ended;
+      m.btns.forEach((b) => b.classList.toggle('is-playing', on));
+    };
+    m.el.addEventListener('play', sync); m.el.addEventListener('pause', sync); m.el.addEventListener('ended', sync);
+  });
+
+  startAnimations(s, bySpid);
+  refreshHot();
+
+  // Audio que arranca solo (según las animaciones de la diapositiva)
+  if (!gatePending) {
+    for (const e of s.anim.main) {
+      if (e.auto && e.cmd && e.cmd.startsWith('playfrom') && bySpid[e.spid]) later(e.start, () => playMedia(bySpid[e.spid]));
+    }
+  }
+}
+
+function prepareMedia(item, vol) {
+  const m = item.el;
+  if (vol != null) m.volume = Math.min(1, Math.max(0, vol));
+  m.preload = 'auto';
+  m.muted = muted;
+  if (item.kind === 'video') { m.playsInline = true; m.setAttribute('playsinline', ''); }
+}
+
+function playMedia(item) {
+  if (!item || !item.el) return;
+  item.el.muted = muted;
+  const p = item.el.play();
+  if (p && p.catch) p.catch((err) => {
+    if (err && err.name === 'NotAllowedError') { pendingAudio.add(item); el.unlock.hidden = false; }
+  });
+}
+function toggleMedia(item) {
+  if (!item) return;
+  if (item.el.paused || item.el.ended) playMedia(item); else item.el.pause();
+}
+function runMediaCmd(item, cmd) {
+  if (!item) return;
+  if (cmd.startsWith('playfrom')) {
+    if (!item.el.paused) { item.el.pause(); return; }
+    const t = parseFloat((cmd.match(/\(([\d.]+)\)/) || [])[1] || '0');
+    if (item.el.ended || item.el.currentTime === 0) item.el.currentTime = t || 0;
+    playMedia(item);
+  } else if (cmd === 'togglepause') toggleMedia(item);
+  else if (cmd === 'pause') item.el.pause();
+  else if (cmd === 'resume') playMedia(item);
+  else if (cmd === 'stop') { item.el.pause(); item.el.currentTime = 0; }
+}
+function stopMedia() {
+  clearFx();
+  mediaList.forEach((m) => { try { m.el.pause(); } catch (_) {} });
+  mediaList = [];
+  pendingAudio.clear();
+  el.unlock.hidden = true;
+}
+el.unlock.addEventListener('click', (e) => {
+  e.stopPropagation();
+  el.unlock.hidden = true;
+  const list = Array.from(pendingAudio); pendingAudio.clear();
+  list.forEach(playMedia);
+});
+
+function setMuted(v) {
+  muted = v;
+  mediaList.forEach((m) => { m.el.muted = v; });
+  el.muteBtn.querySelector('.wave').toggleAttribute('hidden', v);
+  el.muteBtn.querySelector('.x').toggleAttribute('hidden', !v);
+  el.muteBtn.setAttribute('aria-label', v ? 'Activar sonido' : 'Silenciar');
+  el.muteBtn.title = v ? 'Activar sonido (M)' : 'Silenciar (M)';
+}
+
+/* ---------- Clic, teclado y gestos (modo navegador) ---------- */
+let swipeX = null, swiped = false;
+el.slideHost.addEventListener('pointerdown', (e) => { if (e.pointerType !== 'mouse') { swipeX = e.clientX; swiped = false; } });
+el.slideHost.addEventListener('pointerup', (e) => {
+  if (swipeX == null) return;
+  const dx = e.clientX - swipeX; swipeX = null;
+  if (Math.abs(dx) > 60) { swiped = true; dx < 0 ? next() : prev(); }
+});
+el.slideHost.addEventListener('click', (e) => {
+  if (swiped) { swiped = false; return; }
+  if (!deck || e.target.closest('.hot,video,audio,button,a')) return;
+  const s = deck.slides[cur];
+  if (deck.kiosk || (s && !s.advClick)) return;
+  next();
+});
+el.end.addEventListener('click', (e) => { if (!e.target.closest('button')) prev(); });
+
+document.addEventListener('keydown', (e) => {
+  if (el.player.hidden || e.altKey || e.ctrlKey || e.metaKey) return;
+  if (e.target.closest && e.target.closest('input,textarea,select')) return;
+  const k = e.key;
+  if (k === 'f' || k === 'F') { if (fsEnabled) toggleFullscreen(); return; }
+  if (mode !== 'local' || !deck) return;
+  if (!el.gate.hidden) return;
+  if (['ArrowRight', 'ArrowDown', 'PageDown', ' ', 'Enter', 'n', 'N'].includes(k)) {
+    if ((k === ' ' || k === 'Enter') && e.target.closest('button')) return;
+    e.preventDefault(); next();
+  } else if (['ArrowLeft', 'ArrowUp', 'PageUp', 'Backspace', 'p', 'P'].includes(k)) {
+    e.preventDefault(); prev();
+  } else if (k === 'Home') { e.preventDefault(); show(nextVisible(-1) ?? 0); }
+  else if (k === 'End') { e.preventDefault(); show(prevVisible(deck.slides.length) ?? deck.slides.length - 1); }
+  else if (k === 'm' || k === 'M') setMuted(!muted);
+});
+
+function post(msg) {
+  if (window.parent === window) return;
+  try { window.parent.postMessage(Object.assign({ source: 'reproductor-ppsx' }, msg), '*'); } catch (_) {}
+}
+
+/* ---------------- Pantalla de inicio ---------------- */
+function showLinkMsg(t) { el.linkMsg.textContent = t || ''; el.linkMsg.hidden = !t; }
+
+el.linkForm.addEventListener('submit', (e) => {
+  e.preventDefault();
+  showLinkMsg('');
+  try {
+    openSource(el.linkInput.value, { fromGesture: true });
+    const clean = extractSrc(el.linkInput.value);
+    if (clean && /^https?:/i.test(location.protocol)) {
+      const u = new URL(location.href); u.searchParams.set('src', clean); u.searchParams.set('ui', '1');
+      try { window.history.replaceState(null, '', u); } catch (_) {}
+    }
+  } catch (err) {
+    setView('home');
+    showLinkMsg(err.message);
+  }
+});
+el.linkInput.addEventListener('input', updateEmbed);
+
+el.fileInput.addEventListener('change', () => { const f = el.fileInput.files[0]; el.fileInput.value = ''; openFile(f); });
+el.drop.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); el.fileInput.click(); } });
+['dragenter', 'dragover'].forEach((t) => el.drop.addEventListener(t, (e) => { e.preventDefault(); el.drop.classList.add('over'); }));
+['dragleave', 'drop'].forEach((t) => el.drop.addEventListener(t, () => el.drop.classList.remove('over')));
+el.drop.addEventListener('drop', (e) => { e.preventDefault(); openFile(e.dataTransfer.files[0]); });
+// soltar un archivo en cualquier parte de la página también funciona
+window.addEventListener('dragover', (e) => e.preventDefault());
+window.addEventListener('drop', (e) => {
+  e.preventDefault();
+  if (!P.ui && P.src) return;
+  const inDrop = e.target && e.target.closest && e.target.closest('#drop');
+  if (e.dataTransfer && e.dataTransfer.files[0] && !inDrop) openFile(e.dataTransfer.files[0]);
+});
+
+/* Generador del código de inserción */
+function playerBase() {
+  if (/^https?:$/.test(location.protocol)) return location.origin + location.pathname;
+  return null;
+}
+function attr(s) { return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;'); }
+let embedLink = '';
+function updateEmbed() {
+  const raw = el.linkInput.value.trim();
+  let src = null;
+  try { src = raw ? resolveSource(raw, P.modo) : null; } catch (_) { src = null; }
+  if (!src) { el.embedCard.hidden = true; return; }
+  const base = playerBase() || 'https://TU-SITIO.com/reproductor-ppsx.html';
+  const ar = src.ar || 16 / 9;
+  const extra = src.kind === 'office' ? OFFICE_BAR : 48;
+  const w = 960, h = Math.round(w / ar + extra);
+  embedLink = base + '?src=' + encodeURIComponent(extractSrc(raw));
+  el.embedCode.value =
+    `<iframe src="${attr(embedLink)}" width="${w}" height="${h}" ` +
+    `style="width:100%;max-width:100%;height:auto;aspect-ratio:${w}/${h};border:0;display:block" ` +
+    `allow="autoplay; fullscreen; encrypted-media" allowfullscreen title="Presentación"></iframe>`;
+  el.embedNote.textContent = playerBase()
+    ? 'El reproductor se sirve desde esta misma dirección. El botón Iniciar desbloquea el audio en todos los navegadores.'
+    : 'Sube este archivo HTML a tu servidor o LMS y reemplaza “https://TU-SITIO.com/reproductor-ppsx.html” por su dirección real.';
+  el.embedCard.hidden = false;
+}
+async function copy(text, btn) {
+  const old = btn.textContent;
+  try { await navigator.clipboard.writeText(text); btn.textContent = 'Copiado'; }
+  catch (_) { el.embedCode.select(); document.execCommand && document.execCommand('copy'); btn.textContent = 'Copiado'; }
+  setTimeout(() => { btn.textContent = old; }, 1600);
+}
+el.copyEmbed.addEventListener('click', (e) => copy(el.embedCode.value, e.currentTarget));
+el.copyLink.addEventListener('click', (e) => copy(embedLink, e.currentTarget));
+
+/* Presentación incluida dentro de este mismo archivo */
+function startEmbedded(node) {
+  resetPlayer();
+  mode = 'local';
+  aspect = parseAr(node.dataset.ar) || 16 / 9;
+  applyUiFlags();
+  setView('player');
+  const title = P.titulo || node.dataset.title || 'Presentación';
+  if (needsGate(false)) {
+    gatePending = true;
+    gate(title, () => {
+      gatePending = false;
+      if (deck && cur >= 0) show(cur, { push: false });
+    });
+  }
+  loading(true, 'Preparando presentación…');
+  fetch('data:application/octet-stream;base64,' + node.textContent.replace(/\s+/g, ''))
+    .then((r) => r.arrayBuffer())
+    .then((buf) => startLocal(buf, title))
+    .catch((e) => fail('No se pudo abrir la presentación', e.message || String(e)));
+}
+
+/* ---------------- Arranque ---------------- */
+document.getElementById('nojs').remove();
+applyUiFlags();
+setMuted(false);
+if (!P.src && EMBEDDED) {
+  startEmbedded(EMBEDDED);
+} else if (!P.src && DEFAULT_SRC) {
+  el.linkInput.value = DEFAULT_SRC;
+  updateEmbed();
+  try { openSource(DEFAULT_SRC, { fromGesture: false, title: P.titulo || DEFAULT_TITLE || '' }); }
+  catch (err) { setView('home'); showLinkMsg(err.message); }
+} else if (P.src) {
+  try { openSource(P.src, { fromGesture: false }); }
+  catch (err) {
+    setView('player');
+    fail('Enlace no válido', err.message);
+  }
+} else {
+  updateEmbed();
+  setView('home');
+}
+})();
+</script>
+</body>
+</html>
