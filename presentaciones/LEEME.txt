@@ -1,0 +1,2 @@
+Pon aquí tus presentaciones .ppsx o .pptx.
+Luego ábrelas con:  https://TU-USUARIO.github.io/reproductor-ppsx/?src=presentaciones/NOMBRE-DEL-ARCHIVO.ppsx
