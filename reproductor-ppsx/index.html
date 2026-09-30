@@ -11,8 +11,9 @@
 <style>
 /* ============================================================
    Reproductor PPSX
-   - Enlaces OneDrive / SharePoint / URL pública → visor oficial de PowerPoint (conserva animaciones y audio)
-   - Archivo .ppsx / .pptx local o del mismo servidor → se dibuja en el navegador
+   - El .ppsx/.pptx se descarga (OneDrive, Google Drive vía intermediario, Dropbox, servidor con CORS
+     o archivo local) y se dibuja en el navegador con audio, botones y animaciones.
+   - Si no se puede descargar, se usa el visor de Microsoft/Google como respaldo.
    Parámetros de URL: ver bloque "PARÁMETROS" en el script.
    ============================================================ */
 :root{
@@ -195,9 +196,9 @@ code,kbd{font:12.5px/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 
     <div class="card">
       <form id="linkForm" autocomplete="off">
-        <label class="label" for="linkInput">Enlace de OneDrive, código de inserción o URL del archivo</label>
+        <label class="label" for="linkInput">Enlace de OneDrive, Google Drive, Dropbox o URL del archivo</label>
         <div class="row">
-          <input class="field" id="linkInput" type="text" inputmode="url" spellcheck="false" placeholder="https://tu-sitio.com/presentacion.ppsx o enlace de OneDrive">
+          <input class="field" id="linkInput" type="text" inputmode="url" spellcheck="false" placeholder="Enlace de OneDrive o https://tu-sitio.com/presentacion.ppsx">
           <button class="btn" type="submit">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4.5v15l13-7.5z"/></svg>
             Reproducir
@@ -216,12 +217,13 @@ code,kbd{font:12.5px/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
       </label>
 
       <details>
-        <summary>¿Cómo obtengo el enlace correcto de OneDrive?</summary>
+        <summary>¿Qué enlaces funcionan?</summary>
         <ol>
-          <li>Abre la presentación en OneDrive (PowerPoint para la web).</li>
-          <li>Ve a <strong>Archivo → Compartir → Insertar</strong> y pulsa <strong>Generar</strong>.</li>
-          <li>Copia el código o solo el enlace <code>src</code> y pégalo arriba. El enlace de “Copiar vínculo” normal no se deja insertar.</li>
-          <li>Un archivo .ppsx arrastrado aquí se dibuja en el navegador: conserva textos, imágenes, audio, botones y animaciones básicas (aparecer, desaparecer, desplazar).</li>
+          <li><strong>OneDrive:</strong> Compartir → “Cualquier persona con el vínculo” → Copiar vínculo (también sirve el código de Insertar).</li>
+          <li><strong>Google Drive:</strong> Compartir → “Cualquier persona con el enlace”. Necesita el intermediario (proxy) configurado.</li>
+          <li><strong>Dropbox:</strong> enlace compartido del archivo.</li>
+          <li><strong>Tu servidor o GitHub:</strong> la URL directa del .ppsx (el servidor debe permitir leerlo desde otro sitio, CORS).</li>
+          <li>La presentación se dibuja en el navegador: textos, imágenes, audio, botones y animaciones básicas (aparecer, desaparecer, desplazar).</li>
         </ol>
       </details>
     </div>
@@ -328,11 +330,14 @@ code,kbd{font:12.5px/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 <script>
 /* ==========================================================================
    PARÁMETROS (en la URL del reproductor)
-     src          Enlace de OneDrive/SharePoint, código <iframe> (codificado) o URL del .ppsx/.pptx
+     src          Enlace de OneDrive, Google Drive, Dropbox, SharePoint, código <iframe> (codificado)
+                  o URL del .ppsx/.pptx
      titulo       Texto que se muestra en la pantalla de inicio
      inicio       "boton" (por defecto: botón Iniciar que desbloquea el audio) | "directo"
      ui           1 = muestra botón para cambiar de presentación (por defecto oculto si hay src)
-     modo         auto | office | navegador   (solo para URLs de archivos .ppsx/.pptx)
+     modo         auto | office (visor de Microsoft/Google, sin audio en botones) | navegador (sin respaldo)
+     proxy        Dirección del intermediario (Cloudflare Worker) para Google Drive/SharePoint.
+                  También se puede fijar abajo en PROXY_URL.
      diapositiva  Número de diapositiva inicial (modo navegador)
      ar           Relación de aspecto, ej. 16:9 o 1.777 (si el enlace no la trae)
      color        Color de acento en hex, ej. 4C8DFF
@@ -346,6 +351,10 @@ code,kbd{font:12.5px/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
    Vacío = muestra la pantalla de inicio para pegar un enlace o arrastrar un archivo. */
 const DEFAULT_SRC = '';
 const DEFAULT_TITLE = '';
+
+/* Intermediario para leer archivos de Google Drive / SharePoint (opcional).
+   Ejemplo: 'https://ppsx-proxy.TU-USUARIO.workers.dev'   (ver proxy/worker.js) */
+const PROXY_URL = '';
 
 /* Motor para dibujar .ppsx en el navegador (se descarga solo si se necesita) */
 const LIB_URLS = [
@@ -373,8 +382,15 @@ const el = {
 
 /* ---------------- Parámetros ---------------- */
 const qs = new URLSearchParams(location.search);
+function rawQuerySrc() {
+  // también acepta ?https://enlace (sin "src=")
+  const s = location.search.slice(1);
+  if (!/^https?(:|%3A)/i.test(s)) return '';
+  try { return decodeURIComponent(s); } catch (_) { return s; }
+}
 const P = {
-  src: (qs.get('src') || qs.get('url') || qs.get('archivo') || '').trim(),
+  src: (qs.get('src') || qs.get('url') || qs.get('archivo') || rawQuerySrc() || '').trim(),
+  proxy: (qs.get('proxy') || PROXY_URL || '').trim(),
   titulo: qs.get('titulo') || qs.get('title') || '',
   inicio: (qs.get('inicio') || 'boton').toLowerCase(),
   modo: (qs.get('modo') || 'auto').toLowerCase(),
@@ -490,49 +506,96 @@ function extractSrc(input) {
   return s.trim();
 }
 
-/* Devuelve { kind:'office'|'local', url, ar, name } o lanza Error con mensaje en español */
+const isOneDrive = (h) => h === '1drv.ms' || h === 'onedrive.live.com' || h.endsWith('.onedrive.live.com') || h.endsWith('.live.net') || h === 'my.microsoftpersonalcontent.com';
+const isGoogle = (h) => h === 'drive.google.com' || h === 'docs.google.com' || h === 'drive.usercontent.google.com';
+const isDropbox = (h) => h === 'www.dropbox.com' || h === 'dropbox.com' || h === 'dl.dropboxusercontent.com';
+const isSharePoint = (h) => /\.sharepoint\.(com|us)$/.test(h);
+function driveId(u) {
+  const m = u.pathname.match(/\/d\/([\w-]{10,})/);
+  return (m && m[1]) || u.searchParams.get('id') || '';
+}
+function viaProxy(link) {
+  if (!P.proxy) return null;
+  try { const p = new URL(P.proxy); p.searchParams.set('url', link); return p.href; } catch (_) { return null; }
+}
+function officeViewer(url) { return 'https://view.officeapps.live.com/op/embed.aspx?src=' + encodeURIComponent(url); }
+
+/* Devuelve { kind:'office', url, ar }  o  { kind:'local', loaders:[…], ar, name, fallback, need }
+   (loaders = formas de descargar el archivo, en orden). Lanza Error con mensaje en español. */
 function resolveSource(raw, modo) {
   const s = extractSrc(raw);
-  if (!s) throw new Error('Pega un enlace de OneDrive o elige un archivo.');
+  if (!s) throw new Error('Pega un enlace o elige un archivo.');
   let u;
   try { u = new URL(s, location.href); } catch (_) { throw new Error('El enlace no es válido.'); }
   if (u.protocol !== 'https:' && u.protocol !== 'http:' && u.protocol !== 'file:') throw new Error('Solo se aceptan enlaces http(s).');
+  if (u.protocol === 'file:') throw new Error('No se puede abrir una ruta local por enlace. Arrastra el archivo al reproductor.');
   const host = u.hostname.toLowerCase();
   const ar = parseAr(u.searchParams.get('wdAr')) || P.ar;
-  const name = decodeURIComponent((u.pathname.split('/').pop() || '')).replace(PPT_EXT, '');
+  let fileName = '';
+  try { fileName = decodeURIComponent(u.pathname.split('/').pop() || ''); } catch (_) { fileName = ''; }
+  const name = PPT_EXT.test(fileName) ? fileName.replace(PPT_EXT, '') : '';
+  const local = (loaders, fallback, extra = {}) =>
+    ({ kind: 'local', loaders: loaders.filter(Boolean), ar, name, fallback: modo === 'navegador' ? null : fallback, ...extra });
+  const proxied = (link) => { const p = viaProxy(link); return p && { via: 'proxy', url: p }; };
 
-  if (u.protocol !== 'file:') {
-    if (host === '1drv.ms') return { kind: 'office', url: u.href, ar };
-    if (host.endsWith('onedrive.live.com') || host.endsWith('live.net')) {
-      u.pathname = u.pathname.replace(/\/(redir|view\.aspx|download)(\.aspx)?$/i, '/embed');
-      return { kind: 'office', url: u.href, ar };
-    }
-    if (host.endsWith('.sharepoint.com') || host.endsWith('.sharepoint.us')) {
-      const act = (u.searchParams.get('action') || '').toLowerCase();
-      if (act !== 'embedview') u.searchParams.set('action', 'embedview');
-      return { kind: 'office', url: u.href, ar };
-    }
-    if (host === 'view.officeapps.live.com') {
-      u.pathname = u.pathname.replace(/\/op\/view\.aspx$/i, '/op/embed.aspx');
-      return { kind: 'office', url: u.href, ar };
-    }
+  // Visor de Microsoft con ?src=archivo → se abre el archivo directamente
+  if (host === 'view.officeapps.live.com') {
+    const inner = u.searchParams.get('src');
+    if (inner && modo !== 'office' && !/view\.officeapps/i.test(inner)) return resolveSource(inner, modo);
+    u.pathname = u.pathname.replace(/\/op\/view\.aspx$/i, '/op/embed.aspx');
+    return { kind: 'office', url: u.href, ar };
+  }
+
+  // OneDrive personal: se descarga directo (acceso público del visor web de OneDrive)
+  if (isOneDrive(host)) {
+    const office = new URL(u.href);
+    if (host.endsWith('onedrive.live.com')) office.pathname = office.pathname.replace(/\/(redir|view\.aspx|download)(\.aspx)?$/i, '/embed');
+    if (modo === 'office') return { kind: 'office', url: office.href, ar };
+    return local([{ via: 'onedrive', link: u.href }, proxied(u.href)], office.href);
+  }
+
+  // Google Drive: necesita el intermediario (Google no deja leer el archivo desde otro sitio)
+  if (isGoogle(host)) {
+    const id = driveId(u);
+    if (!id) throw new Error('No se encontró el archivo en el enlace de Google Drive.');
+    const preview = 'https://drive.google.com/file/d/' + id + '/preview';
+    if (modo === 'office') return { kind: 'office', url: preview, ar };
+    return local([proxied(u.href)], P.proxy ? preview : null, P.proxy ? {} : {
+      need: 'Para reproducir archivos de Google Drive con audio hay que configurar el intermediario (parámetro proxy). ' +
+            'Mientras tanto usa un enlace de OneDrive o sube el .ppsx a tu servidor.'
+    });
+  }
+
+  // SharePoint / OneDrive empresarial
+  if (isSharePoint(host)) {
+    const office = new URL(u.href);
+    office.searchParams.set('action', 'embedview');
+    if (modo === 'office' || !P.proxy) return { kind: 'office', url: office.href, ar };
+    return local([proxied(u.href)], office.href);
+  }
+
+  // Dropbox: enlace compartido → descarga directa (Dropbox sí permite leerlo)
+  if (isDropbox(host)) {
+    const d = new URL(u.href);
+    if (host !== 'dl.dropboxusercontent.com') { d.hostname = 'dl.dropboxusercontent.com'; d.searchParams.delete('dl'); }
+    if (modo === 'office') return { kind: 'office', url: officeViewer(d.href), ar, name };
+    return local([{ via: 'url', url: d.href }, proxied(u.href)], officeViewer(d.href));
   }
 
   if (PPT_EXT.test(u.pathname)) {
-    const isPublic = u.protocol !== 'file:' && !/^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(host);
-    const officeUrl = isPublic ? 'https://view.officeapps.live.com/op/embed.aspx?src=' + encodeURIComponent(u.href) : null;
+    const isPublic = !/^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(host);
+    const officeUrl = isPublic ? officeViewer(u.href) : null;
     const legacy = /\.(pps|ppt)$/i.test(u.pathname);
     if (modo === 'office' || legacy) {
       if (officeUrl) return { kind: 'office', url: officeUrl, ar, name };
       throw new Error(legacy ? 'El formato antiguo .pps/.ppt solo se puede ver con el visor de Microsoft y necesita una URL pública. Guárdalo como .ppsx.'
                              : 'El visor de Microsoft necesita una URL pública. Sube el archivo a tu servidor.');
     }
-    if (u.protocol === 'file:') throw new Error('No se puede abrir una ruta local por enlace. Arrastra el archivo al reproductor.');
     // motor propio (audio con clic, botones y animaciones); si el servidor no deja leer el archivo, visor de Microsoft
-    return { kind: 'local', url: u.href, ar, name, fallback: modo === 'navegador' ? null : officeUrl };
+    const sameSite = u.origin === location.origin;
+    return local([{ via: 'url', url: u.href }, sameSite ? null : proxied(u.href)], officeUrl);
   }
 
-  if (u.protocol === 'file:') throw new Error('No se puede abrir una ruta local por enlace. Arrastra el archivo al reproductor.');
   return { kind: 'office', url: u.href, ar }; // otro enlace de inserción
 }
 
@@ -589,14 +652,9 @@ function openSource(raw, { fromGesture = false, title: forcedTitle = '' } = {}) 
   mode = src.kind;
   applyUiFlags();
   setView('player');
-  const title = forcedTitle || P.titulo || src.name || 'Presentación';
-  if (src.kind === 'office') {
-    const go = () => loadOffice(src.url);
-    needsGate(fromGesture) ? gate(title, go) : go();
-  } else {
-    const go = () => loadLocalUrl(src.url, title, src.fallback);
-    needsGate(fromGesture) ? gate(title, go) : go();
-  }
+  const title = forcedTitle || P.titulo || src.name || '';
+  const go = src.kind === 'office' ? () => loadOffice(src.url) : () => loadRemote(src, title);
+  needsGate(fromGesture) ? gate(title || 'Presentación', go) : go();
 }
 
 /* ---------------- Modo OneDrive / Office ---------------- */
@@ -663,30 +721,104 @@ function loadLib() {
   return libPromise;
 }
 
-async function loadLocalUrl(url, title, fallback) {
+/* ---------------- Descarga del archivo ---------------- */
+const isZip = (buf) => { const b = new Uint8Array(buf, 0, Math.min(2, buf.byteLength)); return b[0] === 0x50 && b[1] === 0x4b; };
+const b64url = (s) => btoa(unescape(encodeURIComponent(s))).replace(/=+$/, '').replace(/\//g, '_').replace(/\+/g, '-');
+
+/* Archivo en una URL (servidor con CORS, Dropbox o el intermediario) */
+async function fetchBytes(url, via) {
+  let r;
+  try { r = await fetch(url); }
+  catch (_) {
+    throw new Error(via === 'proxy'
+      ? 'No se pudo conectar con el intermediario (proxy). Revisa su dirección.'
+      : 'El servidor donde está el archivo no permite leerlo desde el reproductor. Súbelo al mismo sitio del reproductor, habilita CORS en ese servidor o usa OneDrive.');
+  }
+  if (!r.ok) {
+    let msg = r.status === 404 ? 'No se encontró el archivo (404). Verifica la dirección.' : 'El servidor respondió ' + r.status + '.';
+    try { const j = await r.clone().json(); if (j && j.error) msg = j.error; } catch (_) { /* no es JSON */ }
+    throw new Error(msg);
+  }
+  let name = '';
+  try { name = decodeURIComponent(r.headers.get('x-filename') || ''); } catch (_) { name = ''; }
+  return { buf: await r.arrayBuffer(), name };
+}
+
+/* OneDrive personal: el mismo acceso anónimo que usa el visor web de OneDrive para enlaces públicos */
+let odToken = null;
+async function oneDriveToken() {
+  if (odToken && odToken.exp > Date.now() + 120000) return odToken.token;
+  const r = await fetch('https://api-badgerp.svc.ms/v1.0/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ appId: '5cbed6ac-a083-4e14-b191-b4ba07653de2' })
+  });
+  if (!r.ok) throw new Error('OneDrive no respondió (' + r.status + ').');
+  const j = await r.json();
+  odToken = { token: j.token, exp: Date.parse(j.expiryTimeUtc) || Date.now() + 3600000 };
+  return odToken.token;
+}
+function oneDriveShareIds(link) {
+  const u = new URL(link);
+  const ids = [];
+  const redeem = u.searchParams.get('redeem');
+  if (redeem) ids.push(redeem);
+  if (u.hostname === '1drv.ms') ids.push(b64url(u.origin + u.pathname));
+  ids.push(b64url(u.href));
+  return [...new Set(ids)];
+}
+async function fetchOneDrive(link) {
+  let token;
+  try { token = await oneDriveToken(); }
+  catch (e) { throw new Error('No se pudo conectar con OneDrive. ' + (e.message || '')); }
+  const headers = { Authorization: 'Badger ' + token, Prefer: 'autoredeem' };
+  let last = 'OneDrive no entregó el archivo. Revisa que el enlace sea público (“Cualquier persona con el vínculo”).';
+  for (const id of oneDriveShareIds(link)) {
+    try {
+      const m = await fetch('https://my.microsoftpersonalcontent.com/_api/v2.0/shares/u!' + id +
+        '/driveitem?$select=name,size,@content.downloadUrl', { headers });
+      if (!m.ok) { last = 'OneDrive respondió ' + m.status + '. Revisa que el enlace sea público (“Cualquier persona con el vínculo”).'; continue; }
+      const item = await m.json();
+      const dl = item['@content.downloadUrl'];
+      if (!dl) { last = 'OneDrive no permite descargar este archivo.'; continue; }
+      const f = await fetch(dl);
+      if (!f.ok) { last = 'OneDrive respondió ' + f.status + ' al descargar.'; continue; }
+      return { buf: await f.arrayBuffer(), name: item.name || '' };
+    } catch (_) { last = 'No se pudo descargar el archivo de OneDrive.'; }
+  }
+  throw new Error(last);
+}
+
+async function loadRemote(src, title) {
   loading(true, 'Descargando presentación…');
-  let buf;
-  try {
-    const r = await fetch(url);
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    buf = await r.arrayBuffer();
-  } catch (e) {
-    if (fallback) {
-      // el servidor no permite leer el archivo desde otro sitio (CORS): se usa el visor de Microsoft
+  let got = null;
+  let why = src.need || '';
+  for (const ld of src.loaders || []) {
+    try {
+      const r = ld.via === 'onedrive' ? await fetchOneDrive(ld.link) : await fetchBytes(ld.url, ld.via);
+      if (!isZip(r.buf)) { why = 'El enlace no devolvió una presentación .ppsx o .pptx.'; continue; }
+      got = r;
+      break;
+    } catch (e) {
+      why = e.message || String(e);
+      console.warn('[reproductor-ppsx] descarga (' + ld.via + '):', why);
+    }
+  }
+  if (!got) {
+    if (src.fallback) {
+      // no se pudo descargar: se muestra con el visor de Microsoft/Google (sin audio en botones)
+      console.warn('[reproductor-ppsx] se usa el visor de respaldo:', src.fallback);
       mode = 'office';
       el.slideHost.hidden = true;
       el.bar.hidden = true;
       applyUiFlags();
-      loadOffice(fallback);
+      loadOffice(src.fallback);
       return;
     }
-    const cross = (() => { try { return new URL(url).origin !== location.origin; } catch (_) { return false; } })();
-    fail('No se pudo descargar la presentación', cross
-      ? 'El servidor donde está el archivo no permite leerlo desde el reproductor. Súbelo al mismo sitio del reproductor o habilita CORS en ese servidor.'
-      : 'Verifica que la dirección del archivo exista. (' + (e.message || e) + ')');
+    fail('No se pudo descargar la presentación', why || 'Verifica que el enlace sea público.');
     return;
   }
-  await startLocal(buf, title);
+  await startLocal(got.buf, title || String(got.name || '').replace(PPT_EXT, '') || 'Presentación');
 }
 
 async function openFile(file) {
@@ -1587,6 +1719,7 @@ function updateEmbed() {
   const extra = src.kind === 'office' ? OFFICE_BAR : 48;
   const w = 960, h = Math.round(w / ar + extra);
   embedLink = base + '?src=' + encodeURIComponent(extractSrc(raw));
+  if (qs.get('proxy')) embedLink += '&proxy=' + encodeURIComponent(qs.get('proxy'));
   el.embedCode.value =
     `<iframe src="${attr(embedLink)}" width="${w}" height="${h}" ` +
     `style="width:100%;max-width:100%;height:auto;aspect-ratio:${w}/${h};border:0;display:block" ` +
